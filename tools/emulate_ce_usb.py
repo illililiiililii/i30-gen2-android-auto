@@ -262,7 +262,7 @@ class TlsUsbClient(UsbClient):
     heap = 0x50000000
 
     def __init__(self, path, files, context, *, video=None, preempt=False, clock=None, silent=False,
-                 video_deadline=False, handshake_reply=None):
+                 video_deadline=False, handshake_reply=None, interleave_control=False):
         super().__init__(path, 'version')
         self.files = files
         self.positions = {}
@@ -279,15 +279,17 @@ class TlsUsbClient(UsbClient):
         self.clock = int(time()) if clock is None else clock
         self.silent = silent
         self.handshake_reply = handshake_reply
+        self.interleave_control = interleave_control
         self.owner = 0x9000 if video else 0
         self.projected = 0
         self.video_acks = 0
+        self.pongs = 0
         self.focus_history = []
         self.audio_focus_denied = False
         self.allocations = {}
         self.next_heap = self.heap
 
-    def service_frame(self, message, channel=0, flags=0, *, fragment=None):
+    def service_frame(self, message, channel=0, flags=0, *, fragment=None, between=None):
         if fragment is not None:
             for start, stop, flag in ((0, fragment, 1), (fragment, len(message), 2)):
                 part = message[start:stop]
@@ -297,6 +299,8 @@ class TlsUsbClient(UsbClient):
                 if flag == 1:
                     self.pending.extend(struct.pack('>I', len(message)))
                 self.pending.extend(encrypted)
+                if flag == 1 and between:
+                    self.service_frame(between)
             return
         assert self.peer.write(message) == len(message)
         encrypted = self.outbox.read()
@@ -324,6 +328,8 @@ class TlsUsbClient(UsbClient):
             elif message == b'\x00\x10':
                 assert self.video
                 self.closed_gracefully = True
+            elif message == b'\x00\x0c\x08\x7b':
+                self.pongs += 1
             else:
                 assert message == b'\x00\x0f\x08\x01'
                 self.service_frame(b'\x00\x10')
@@ -370,7 +376,8 @@ class TlsUsbClient(UsbClient):
             assert message[2::2] == b'\x08\x10'
             self.focus_history.append((focus, unsolicited))
             if (focus, unsolicited) == (1, 0):
-                self.service_frame(bytes(10) + self.video, 3, fragment=11)
+                ping = b'\x00\x0b\x08\x7b' if self.interleave_control else None
+                self.service_frame(bytes(10) + self.video, 3, fragment=11, between=ping)
             elif (focus, unsolicited) == (1, 1):
                 assert self.preempt and self.video_acks == 2
                 self.service_frame(bytes(10) + self.video, 3)
@@ -543,6 +550,8 @@ def test_tls(path, openssl, exercise_projection=False):
     assert result['accepted'] and result['signals'] == missing_status, result
 
     with test_identity(openssl) as (cert, key, context):
+        reference_cipher = 'ECDHE-RSA-AES128-GCM-SHA256'
+        context.set_ciphers(reference_cipher)
         cert_der = ssl.PEM_cert_to_DER_cert(cert.read_text(encoding='ascii'))
         key_der = subprocess.check_output([openssl, 'pkey', '-in', key, '-outform', 'DER'], timeout=10)
         files = {'i30-ca.der': cert_der, 'i30-peer.txt': b'i30-mock.local',
@@ -553,12 +562,14 @@ def test_tls(path, openssl, exercise_projection=False):
             'i30 CE authenticated service discovery completed.'), (good, verified.peer_error)
         assert verified.services.headunit_info.head_unit_model == 'GD13MY'
         assert not verified.services.channels and verified.closed_gracefully
+        assert verified.peer.cipher() == (reference_cipher, 'TLSv1.2', 128)
         wrong = TlsUsbClient(path, dict(files, **{'i30-peer.txt': b'other.invalid'}), context)
         denied = wrong.attach()
         assert not wrong.authenticated and denied['debug'][-2:] == [
-            'i30 CE TLS BearSSL error: 56', 'i30 CE TLS phone certificate trust or peer identity rejected.'], denied
+            'i30 CE TLS BearSSL error: 56', 'i30 CE TLS phone certificate hostname does not match.'], denied
         report = {'projection_without_credentials': missing_status,
-                  'mutual_tls': good['debug'][-1], 'media_channels': len(verified.services.channels),
+                  'mutual_tls': good['debug'][-1], 'negotiated_cipher': reference_cipher,
+                  'media_channels': len(verified.services.channels),
                   'graceful_close': verified.closed_gracefully, 'wrong_hostname': denied['debug'][-2:]}
         fragmented = TlsUsbClient(path, files, context, handshake_reply=fragmented_tls_reply)
         result = fragmented.attach()
@@ -587,6 +598,7 @@ def test_tls(path, openssl, exercise_projection=False):
         leaf_only = TlsUsbClient(path, dict(chain_files, **{'i30-client.pem': leaf.read_bytes()}), context)
         result = leaf_only.attach()
         assert not leaf_only.authenticated and 'i30 CE TLS peer fatal alert: 48' in result['debug'], result
+        assert result['debug'][-1] == 'i30 CE TLS phone rejected the head unit certificate chain (unknown CA).', result
         report['client_chain'] = 'A TLS peer requiring the intermediate accepted the full PEM chain and rejected the leaf alone'
 
         clock_errors = (
@@ -614,6 +626,15 @@ def test_tls(path, openssl, exercise_projection=False):
         assert result['debug'][-3:] == ['i30 CE TLS BearSSL error: 326', 'i30 CE TLS peer fatal alert: 70',
                                         'i30 CE TLS phone sent a fatal alert.'], result
         report['tls_alert'] = result['debug'][-3:]
+        no_shared_cipher = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        no_shared_cipher.minimum_version = no_shared_cipher.maximum_version = ssl.TLSVersion.TLSv1_2
+        no_shared_cipher.load_cert_chain(cert, key)
+        no_shared_cipher.set_ciphers('DHE-RSA-AES128-GCM-SHA256')
+        cipher_guest = TlsUsbClient(path, files, no_shared_cipher)
+        result = cipher_guest.attach()
+        assert not cipher_guest.authenticated and cipher_guest.peer_error == 'NO_SHARED_CIPHER', result
+        assert 'i30 CE TLS peer fatal alert: 40' in result['debug'], result
+        report['no_shared_cipher'] = {'peer_error': cipher_guest.peer_error, 'guest_alert': 40}
         pin_files = {name: data for name, data in files.items() if name != 'i30-peer.txt'}
         pin_files['i30-peer-sha256.txt'] = sha256(cert_der).hexdigest().encode('ascii') + b'\r\n'
         pinned = TlsUsbClient(path, pin_files, context)
@@ -622,13 +643,13 @@ def test_tls(path, openssl, exercise_projection=False):
         wrong_pin = TlsUsbClient(path, dict(pin_files, **{'i30-peer-sha256.txt': b'0' * 64}), context)
         result = wrong_pin.attach()
         assert not wrong_pin.authenticated and result['debug'][-2:] == [
-            'i30 CE TLS BearSSL error: 62', 'i30 CE TLS phone certificate trust or peer identity rejected.'], result
+            'i30 CE TLS BearSSL error: 62', 'i30 CE TLS phone certificate fingerprint does not match.'], result
         with test_identity(openssl) as (other_cert, other_key, _):
             bad_ca = ssl.PEM_cert_to_DER_cert(other_cert.read_text(encoding='ascii'))
             untrusted = TlsUsbClient(path, dict(pin_files, **{'i30-ca.der': bad_ca}), context)
             result = untrusted.attach()
             assert not untrusted.authenticated and result['debug'][-2:] == [
-                'i30 CE TLS BearSSL error: 62', 'i30 CE TLS phone certificate trust or peer identity rejected.'], result
+                'i30 CE TLS BearSSL error: 62', 'i30 CE TLS phone certificate chain has no trusted anchor.'], result
             result = TlsUsbClient(path, dict(pem_files, **{'i30-client-key.pem': other_key.read_bytes()}), context).attach()
             assert result['debug'][-1] == 'i30 CE TLS head unit certificate and RSA key do not match.', result
             report['key_mismatch'] = result['debug'][-1]
@@ -642,14 +663,17 @@ def test_tls(path, openssl, exercise_projection=False):
             for plane, value in zip(frame.planes, (81, 90, 240)):
                 plane.update(bytes([value]) * plane.buffer_size)
             sample = b''.join(bytes(packet) for packet in (*codec.encode(frame), *codec.encode(None)))
-            for mode in ('video', 'display_preemption', 'video_deadline'):
+            for mode in ('video', 'display_preemption', 'video_deadline', 'interleaved_control'):
                 preempt, deadline = mode == 'display_preemption', mode == 'video_deadline'
-                projected = TlsUsbClient(path, files, context, video=sample, preempt=preempt, video_deadline=deadline)
+                interleaved = mode == 'interleaved_control'
+                projected = TlsUsbClient(path, files, context, video=sample, preempt=preempt,
+                                         video_deadline=deadline, interleave_control=interleaved)
                 result = projected.attach()
                 assert projected.projected == (2 if preempt else 1) and not projected.allocations, result
                 assert projected.video_acks == (3 if preempt else 1)
                 assert projected.closed_gracefully != deadline
                 assert projected.audio_focus_denied
+                assert projected.pongs == int(interleaved), result
                 assert projected.ms >= 8900
                 assert projected.focus_history == ([(1, 0), (2, 1), (1, 1)] if preempt else [(1, 0)])
                 assert 'i30 CE projection frame presented.' in result['debug']

@@ -1,0 +1,49 @@
+# GD13MY Android Auto 심층 분석
+
+2026년 11월 24일 · GD13MY.KOR.SOP.00.061 · Windows CE 6.0 ARM. 이전 실폰 오류 기록과 인증 자료 형식은 [인증 상태](ANDROID_AUTO_AUTH_STATUS.md)에 있다.
+
+## XDA 게시물과 후속 자료
+
+XDA 본문과 첨부 URL에 직접 접근하면 HTTP 403이 반환됐다. 공개 Wayback 사본에서 첫 스레드의 1~5페이지 본문 97개와 AutoLink 스레드 본문 8개를 읽었다. 두 번째 스레드의 첨부 두 건은 보관본을 찾지 못해 사진·원시 로그의 내용은 검증하지 못했다.
+
+| 페이지 | 확인한 구현 또는 보고 |
+| --- | --- |
+| WinCE 1 | 2014년의 이식 논의에서 폰이 화면을 처리하고 헤드유닛이 수신하는 구조가 논의됐다. Hyundai Motrex의 작동 사례는 게시물에서 EasyConnected USB 미러링으로 식별된다. [1페이지](https://web.archive.org/web/20221212180840/https://forum.xda-developers.com/t/porting-android-auto-to-existing-windows-ce-car-headunits.2795971/) |
+| WinCE 2 | Carbit/EasyConnected용 CE와 Android 앱, ARM·MIPS 호환 여부와 AllGo SDK 링크가 나온다. AllGo의 보관된 제품 페이지에서 AOA·오디오·비디오 통합과 Telechips TCC8930의 WinCE 7.0 시연을 확인했다. GD13MY OMAP3530/CE 6.0용 SDK 소스나 평가 인증 자료는 확인되지 않았다. [2페이지](https://web.archive.org/web/20251123215935/https://xdaforums.com/t/porting-android-auto-to-existing-windows-ce-car-headunits.2795971/page-2) · [AllGo 자료 보관본](https://web.archive.org/web/20220116105512/http://www.allgosystems.com/Android_Auto_Projection.php) |
+| WinCE 3 | WinCE에서 Android Auto와 CarPlay를 실행했다는 게시물은 USB 동글을 사용했다. OpenAuto의 WinCE 포팅은 제안으로 등장한다. 여기서 언급한 Kia MIPS 기기의 바이너리 호환성은 ARM GD13MY와 별개다. [3페이지](https://web.archive.org/web/20251123215736/https://xdaforums.com/t/porting-android-auto-to-existing-windows-ce-car-headunits.2795971/page-3) |
+| WinCE 4 | RCD330과 Android Auto 지원 RCD330 Plus의 OS를 혼동했다는 정정이 있다. AutoKit WinCE와 동글을 시도했고 MyLink MIPS 및 일부 동글 인식 실패, Ford Sync2 작동 보고가 함께 있다. [4페이지](https://web.archive.org/web/20260415172629/https://xdaforums.com/t/porting-android-auto-to-existing-windows-ce-car-headunits.2795971/page-4) |
+| WinCE 5 | Tucson의 별도 Gen5 헤드유닛 교체 글과 WinCE AutoKit 아카이브 링크가 있다. WinCE 6 ARM에서 동글 없이 직접 연결할 수 있는 앱을 찾는 후속 질문에는 성공 기록이 없다. [마지막 페이지](https://web.archive.org/web/20260415172628/https://xdaforums.com/t/porting-android-auto-to-existing-windows-ce-car-headunits.2795971/page-5) · [Tucson 후속 스레드 보관본](https://web.archive.org/web/20251123215929/https://xdaforums.com/t/upgrading-to-a-gen5-headunit-from-gen2-in-an-european-hyundai-tucson-2015-17-to-get-aa.4649707/) |
+| AutoLink MP5 | APP `ZCDP0U04_2022/06/15` 및 MCU `ZCD_2021/11/16`의 오류 7 보고다. 댓글은 폰의 `SSLHandshakeException`과 `OPENSSL_internal:UNSUPPORTED_PROTOCOL`을 인용한다. 정확한 ClientHello/ServerHello와 장치 원본 로그는 확보하지 못했다. 판매자 문의에서 업데이트를 확보하지 못했고 한 사용자는 별도 구형 폰에서만 동작을 보고했다. [AutoLink 스레드](https://web.archive.org/web/20260215222316/https://xdaforums.com/t/need-firmware-for-autolink-mp5-zcd-mcu-android-auto-error-7-came-with-used-car.4761332/) · [관련 Google 지원 토론](https://support.google.com/androidauto/thread/366505705/android-auto-samsung-s24-in-a-peugeot-2008-from-2019-unstable-connection?hl=en-au) |
+
+AutoLink 댓글의 프로토콜 오류 보고와 GD13MY 실폰 로그는 서로 다른 세션에서 얻었다. GD13MY에서는 폰이 TLS 1.2의 인증서 요청까지 보낸 뒤 자체 발급 헤드유닛 체인을 거부했다. 오류 번호만으로 TLS 버전, 암호 스위트 또는 인증서 방향을 정할 수 없다. [GD13MY 실폰 단계](ANDROID_AUTO_AUTH_STATUS.md#실폰에서-확인한-실패-단계)
+
+## 공개 소스 대조
+
+| 구현 | 확인한 코드와 GD13MY 적용 지점 |
+| --- | --- |
+| f1xpl/aasdk · f1xpl/openauto | `SSLWrapper.cpp`가 OpenSSL TLS 1.2 클라이언트, 인증서·키 로딩과 일치 검사를 제공한다. `MessageOutStream::compoundFrame`은 첫 조각에 전체 길이를 보내고, `AndroidAutoEntity::onVersionResponse`와 `onHandshake`가 TLS를 진행한 뒤 인증 완료 및 서비스 탐색으로 넘긴다. 두 저장소의 README는 GPLv3로 표기한다. [TLS](https://github.com/f1xpl/aasdk/blob/development/src/Transport/SSLWrapper.cpp) · [버전·세션](https://github.com/f1xpl/openauto/blob/development/src/autoapp/Service/AndroidAutoEntity.cpp) · [프레이밍](https://github.com/f1xpl/aasdk/blob/development/src/Messenger/MessageOutStream.cpp) |
+| JanRi3D/OpenAuto | `Session`의 버전·TLS·검색, `TlsCredentials`의 DER 인증서와 PKCS#8 키, `FrameAssembler`의 채널별 조립을 확인했다. Android Auto 1.7 실폰에서 영상 조각 사이에 오디오 프레임이 들어왔다고 코드에 기록돼 있다. 저자의 ADAYO USB 투사 및 TLS 1.2 `0xC02F` 기록이 있다. 이 저장소의 원본 수신기 소스 전체에 적용할 라이선스와 헤드유닛 신원의 사용 범위는 확인되지 않았다. [세션](https://github.com/JanRi3D/OpenAuto/blob/main/app/src/main/java/me/ri3d/openauto/aa/Session.java) · [조립기](https://github.com/JanRi3D/OpenAuto/blob/main/app/src/main/java/me/ri3d/openauto/aa/FrameAssembler.java) · [실폰 시험](https://github.com/JanRi3D/OpenAuto/blob/main/docs/TEST-RESULTS.md) |
+| prototux/AARE | GPL-3.0 폰 측 구현이다. `Cryptor`는 TLS 1.2의 서버 역할과 사용자 승인 지문 저장을 제공한다. 자체 시험용 폰 신원과 수신기의 별도 신뢰 프로필로 GD13MY와 직접 연결을 시험할 수 있다. Google Android Auto 앱과 지원 앱 범위가 다르며 GD13MY 실폰 검증은 남았다. [TLS 및 지문 처리](https://github.com/prototux/AARE/blob/main/aap/src/main/kotlin/net/prototux/aare/aap/Cryptor.kt) · [인증서 관찰](https://github.com/prototux/AARE/blob/main/docs/certificates.md) |
+| aa-proxy/aa-proxy-rs | GPL-2.0 Rust 구현이다. `aoa.rs`의 요청 51/52/53, 액세서리 bulk 엔드포인트 찾기와 `proxy.rs`의 통과 모드를 비교했다. 통과 모드의 TLS 신원은 스마트폰과 원래 헤드유닛이 담당한다. [AOA](https://github.com/aa-proxy/aa-proxy-rs/blob/main/src/aoa.rs) · [전달](https://github.com/aa-proxy/aa-proxy-rs/blob/main/src/proxy.rs) |
+| geraldhoong/headunit-revived | AGPL-3.0 Android 수신기다. `AapSsl`의 핸드셰이크 진입점, `AapReadMultipleMessages::doRead`의 USB 읽기/FIFO 경계, `AapControl`의 채널 열기와 오디오 포커스 처리, `AapAudio`의 Android 오디오 경로를 확인했다. Android용 UI 및 오디오 의존성은 CE에 별도 구현이 필요하다. 후속 Open Headunit에는 USB 정상 보고와 오류 7 보고가 모두 있다. [TLS 진입점](https://github.com/geraldhoong/headunit-revived/blob/main/app/src/main/java/com/andrerinas/headunitrevived/aap/AapSsl.kt) · [채널 처리](https://github.com/geraldhoong/headunit-revived/blob/main/app/src/main/java/com/andrerinas/headunitrevived/aap/AapControl.kt) · [오류 7](https://github.com/andreknieriem/open-headunit/issues/14) |
+| andresurena/android-head-unit-exploration | MIT의 사후 분석·수리 프로젝트다. `patches/README.md`는 ZLINK 네이티브 `libzjL10001.so`를 대상으로 하는 작업을 식별한다. 독립 수신기 전체 소스 및 GD13MY용 인증 자료는 확인되지 않았다. [분석 대상 설명](https://github.com/andresurena/android-head-unit-exploration/tree/main/patches) |
+| gartnera/headunit · enhance-uconnect-5 | AGPL-3.0이다. Mazda 구현은 `hu_usb.cpp`에서 libusb bulk, `hu_aap.cpp`에서 버전·검색·채널 프레임 처리를 한다. Uconnect의 WinCE 플러그인은 Android 브리지의 영상 전달을 받는다. 둘은 각각 자동차용 ABI와 브리지 의존성이 다르다. [Mazda AAP](https://github.com/gartnera/headunit/blob/master/hu/hu_aap.cpp) · [Mazda USB](https://github.com/gartnera/headunit/blob/master/hu/hu_usb.cpp) · [Uconnect 구조](https://github.com/moppeeer/enhance-uconnect-5) |
+
+기존 CE 포트의 BearSSL 0.6(MIT)과 h264bsd(AOSP Apache-2.0 배경 및 기존 동봉 라이선스)를 사용했다. 위 수신기에서는 메시지 순서와 실제 상호운용 사례를 대조했고, 변경 코드는 기존 GD13MY/PC 프레이밍과 WinCE API로 구현했다. 저장소에는 외부 수신기 바이너리나 제3자 신원을 넣지 않았다. [BearSSL 소스](https://www.bearssl.org/gitweb/?p=BearSSL;a=summary) · [h264bsd 라이선스](https://github.com/oneam/h264bsd/blob/master/LICENSE.md)
+
+## 펌웨어와 바이너리
+
+- **GD13MY .061.** REA가 순정 `LibUSB.dll`과 `LibVideo.dll`을 Thumb PE32(`0x01c2`)로 확인했다. `LibUSB.dll`은 `COREDLL.dll`, `LibMMCodec.dll`, `LibSound.dll`과 `LibVideo.dll` 등을 가져온다. 기존 Ghidra의 삽입 이벤트 참조와 `USB_POWER_DOWN` 경로는 마운트/순정 미디어와 연결된다. `usbd.dll`의 `USB_FUNCS`와 bulk 파이프는 프로젝트의 `USBDeviceAttach`가 사용한다. 이 범위에서 순정 AAP·TLS 모듈은 확인되지 않았다. [순정 USB 역공학](USB_ANALYSIS.md) · [네이티브 USB 진입점](../src/ce/ce_aa_usb_client.c)
+- **WinCE AutoKit.** 공개 Ford 사본에서 REA가 `AutoKit.exe`와 `CEUSBBOX.DLL`의 머신 타입 `0x01c2`를 확인했다. 앱은 `COREDLL.dll`, `Uigeardll2.dll`, `PALinterface2.dll`, `Thread.dll` 등을, USB 모듈은 `COREDLL.dll`, `WS2.dll`, `NDIS.dll`, `CEDDK.dll`을 가져온다. OEM DLL 및 외장 동글 의존성이 있다. 제조사의 WinCE 6.0 안내는 USB가 메인 칩으로 연결되는 구성을 조건으로 둔다. 이 공개 사본의 배포·이식 권한, GD13MY용 드라이버 호환성, 폰 TLS가 종료되는 실제 함수는 확인되지 않았다. [Ford 사본 목록](https://github.com/typlo-gh/Ford-WINCE-Autokit) · [제조사 WinCE 안내](https://www.carlinkit.com/products_support/9240178.html)
+- **Genesis G80.** 로컬 공식 업데이터는 REA 검사에서 PE32 x86(`0x014c`)와 Qt5·WinINet·libcurl을 사용하는 PC 프로그램으로 확인됐다. G80 차량 펌웨어 비교본과 확인 가능한 독립 TLink 수신기 바이너리는 확보하지 못했다. 국내 G80 고급형 2세대의 `DHPE.KOR.SOP.00.057` 식별과 미국 GD의 Android Auto 지원은 공식 자료에서 각각 확인했다. [G80 국내 모델 목록](https://update.genesis.com/KR/KO/updateNoticeView/software-version) · [현대 미국 GD 안내](https://static.nhtsa.gov/odi/tsbs/2016/SB-10081532-0699.pdf)
+
+## 적용 결과와 재시험
+
+- CE `secure_read`에 제어 채널 0과 영상 채널 3의 독립 조립 상태를 둔다. 영상 조각 사이의 제어 요청은 별도 제어 버퍼에서 반환하고, 다음 호출에서 영상 조립을 계속한다. 총 길이, 플래그와 마지막 조각 위치를 채널별로 검사한다. 같은 유효 입력에서 이전 ARM DLL은 상호 TLS 뒤 Pong과 영상 확인 응답이 각각 0회였고, 수정 DLL은 Pong 1회와 영상 확인 응답 1회를 기록했다. [보호 프레임 수신](../src/ce/ce_aa_tls.c) · [ARM 비교 시험](../tools/emulate_ce_usb.py)
+- WinCE의 폰 CA 신뢰 실패, 폰 이름이나 지문 불일치, 그리고 폰이 돌려준 `unknown_ca` 경고를 별도 로그와 뷰어 메시지로 표시한다. 시험 CA·중간 체인·RSA 키 일치·유효기간/UTC·분할 TLS의 정상/거부 경로를 ARM으로 검증했다. TLS 1.3 전용 모의 피어는 경고 70을, 공유 스위트가 없는 TLS 1.2 모의 피어는 `NO_SHARED_CIPHER`와 경고 40을 기록했다. 정상 ARM TLS 1.2 시험은 DHU와 같은 `0xC02F`를 사용할 수 있다. [TLS 설정·진단](../src/ce/ce_aa_tls.c) · [로그 표시](../tools/view_gd13my.py)
+- 격리된 전체 WinCE에서 가상 USB, 상호 TLS, 서비스 탐색과 Pong 1회·영상 확인 응답 1회를 검증했다. 저장된 DHU 화면을 시험 프레임으로 전송했고 800×480 LCD 캡처의 원본 대비 RGB 채널 평균 절대 오차는 3.15/255였다. Python 회귀 시험 84개와 영상 없는 ARM TLS 빌드도 통과했다.
+- 11월 24일 실폰 PC 직접 USB에서 `18d1:2d00` bulk를 열고 AA 1.7 응답을 받았다. 같은 폰의 공식 DHU USB에서 TLS 1.2 `0xC02F`와 인증서 검증 성공을 기록했다. 직후 WinCE ARM DLL 단독 실폰 프로브에는 버전 응답 대신 이전 연결에서 남은 것으로 보이는 암호화 프레임이 왔다. 그 시도는 TLS 전의 버전 단계에서 종료됐다. 수정 수신기의 실제 폰 인증과 영상은 검증 전이다.
+
+기존 도구 경로와 의존성은 [세션 인계](SESSION_HANDOFF.md)를 따른다. ARM 검증을 재현하려면 1) `tools/build_ce_usb.py`에 `--compiler`, `--bearssl-source`, `--h264-source`와 별도 출력 경로를 지정하고 2) `tools/emulate_ce_usb.py <출력 경로> --tls-openssl <openssl.exe> --projection`을 실행한다. 격리된 LCD 이미지에서는 `tools/verify_gd13my_virtual_phone.py`에 기존 이미지·매니페스트·베이스 디스크·컴파일러·OpenSSL과 `--lcd-bench --interleave-control`을 지정한다. `--frame-image`를 추가하면 사용 권한이 있는 800×480 로컬 이미지를 영상으로 전송하고 WinCE LCD 캡처와 비교한다.
+
+실폰 테스트에서는 DHU 기준 연결 종료 뒤 케이블을 분리하고 초기 USB 열거부터 다시 시작한다. 이 워크스페이스에서는 `tools/run_gd13my_phase78.ps1 -StockProjectionImage build/gd13my-aa-deep-retest/gd13my-aa-deep.img -UsbPort 1-2`로 새 순정 메뉴용 후보를 연다. 후보 이미지는 순정 파일 114개의 바이트 일치를 확인했다. 기존 Google Android Auto 앱으로 시험할 때는 해당 폰이 신뢰하고 이 프로젝트에 사용 권한이 있는 헤드유닛 인증 자료가 필요하다. 실제 차량을 플래시하지 않았다. [실폰 재시험 절차](ANDROID_AUTO_AUTH_STATUS.md#실폰-재시험)

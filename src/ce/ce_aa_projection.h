@@ -4,11 +4,14 @@
 #include "ce_minimal.h"
 
 #define I30_PROJECTION_WINDOW_TITLE L"Android Auto · i30"
+#define I30_PROJECTION_VIDEO_CHANNEL 3U
 
 typedef struct I30SecureChannel {
     void *context;
     int (*send)(void *context, unsigned channel, unsigned flags, const uint8_t *data, unsigned size);
-    int (*receive)(void *context, unsigned *channel, unsigned *flags, uint8_t *data, unsigned capacity);
+    /* Complete control messages use receiver-owned storage so partial video stays in video_buffer. */
+    int (*receive)(void *context, unsigned *channel, unsigned *flags, uint8_t *video_buffer,
+                   unsigned capacity, uint8_t **message);
 } I30SecureChannel;
 
 /* Returns a verified projection target while the stock display permits drawing. */

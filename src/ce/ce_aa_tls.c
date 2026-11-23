@@ -28,7 +28,7 @@ typedef struct PinnedChain {
     br_sha256_context leaf;
     uint8_t expected[32];
     unsigned count;
-    int matched;
+    int matched, rejected;
 } PinnedChain;
 
 typedef struct Credential {
@@ -36,6 +36,10 @@ typedef struct Credential {
     size_t length, capacity;
     int overflow;
 } Credential;
+
+typedef struct ProtectedMessage {
+    unsigned used, total, flags;
+} ProtectedMessage;
 
 typedef struct Session {
     br_ssl_client_context client;
@@ -51,6 +55,7 @@ typedef struct Session {
     uint8_t io[BR_SSL_BUFSIZE_BIDI];
     uint8_t wire[TLS_FRAME_MAX + 6U];
     uint8_t control[0x4000];
+    ProtectedMessage control_rx, video_rx;
     uint8_t ca[4096], dn[512];
     uint8_t client_cert[8192], key_der[4096];
     uint8_t encoded[12289];
@@ -72,6 +77,7 @@ static void pin_start(const br_x509_class **context, const char *name)
     PinnedChain *pin = (PinnedChain *)context;
     pin->count = 0;
     pin->matched = 0;
+    pin->rejected = 0;
     br_sha256_init(&pin->leaf);
     (*pin->chain)->start_chain(pin->chain, name);
 }
@@ -108,7 +114,8 @@ static unsigned pin_end(const br_x509_class **context)
 {
     PinnedChain *pin = (PinnedChain *)context;
     unsigned result = (*pin->chain)->end_chain(pin->chain);
-    return !result && !pin->matched ? BR_ERR_X509_NOT_TRUSTED : result;
+    pin->rejected = !result && !pin->matched;
+    return pin->rejected ? BR_ERR_X509_NOT_TRUSTED : result;
 }
 
 static const br_x509_pkey *pin_key(const br_x509_class *const *context, unsigned *uses)
@@ -585,7 +592,7 @@ static int secure_write(Session *s, const I30Link *link, unsigned channel, unsig
 }
 
 static int secure_read_fragment(Session *s, const I30Link *link, unsigned *channel, unsigned *flags,
-                                unsigned *total, uint8_t *output, unsigned limit)
+                                unsigned *total)
 {
     br_ssl_engine_context *engine = &s->client.eng;
     uint8_t header[4];
@@ -604,7 +611,7 @@ static int secure_read_fragment(Session *s, const I30Link *link, unsigned *chann
             return -1;
         *total = ((unsigned)header[0] << 24) | ((unsigned)header[1] << 16) |
                  ((unsigned)header[2] << 8) | header[3];
-        if (!*total || *total > limit)
+        if (*total < 2U)
             return -1;
     }
     while (length) {
@@ -619,9 +626,9 @@ static int secure_read_fragment(Session *s, const I30Link *link, unsigned *chann
         length -= (unsigned)capacity;
         uint8_t *app = br_ssl_engine_recvapp_buf(engine, &capacity);
         if (app) {
-            if (capacity > limit - decoded)
+            if (capacity > sizeof(s->wire) - decoded)
                 return -1;
-            memcpy(output + decoded, app, capacity);
+            memcpy(s->wire + decoded, app, capacity);
             decoded += capacity;
             br_ssl_engine_recvapp_ack(engine, capacity);
         }
@@ -632,29 +639,54 @@ static int secure_read_fragment(Session *s, const I30Link *link, unsigned *chann
 }
 
 static int secure_read(Session *s, const I30Link *link, unsigned *channel, unsigned *flags,
-                       uint8_t *output, unsigned limit)
+                       uint8_t *video_buffer, unsigned video_capacity, uint8_t **message)
 {
-    unsigned raw, total;
-    int size = secure_read_fragment(s, link, channel, &raw, &total, output, limit);
-    if (size <= 0 || (!(raw & 1U)))
-        return -1;
-    *flags = raw & 4U;
-    if ((raw & 3U) == 3U)
-        return size;
-    unsigned used = (unsigned)size;
-    if (used >= total)
-        return -1;
-    while (used < total) {
-        unsigned next_channel, next_flags, unexpected;
-        size = secure_read_fragment(s, link, &next_channel, &next_flags, &unexpected,
-                                    output + used, total - used);
-        if (size <= 0 || next_channel != *channel || (next_flags & 5U) != *flags || unexpected)
+#ifndef I30_NATIVE_VIDEO
+    (void)video_buffer;
+    (void)video_capacity;
+#endif
+    for (;;) {
+        unsigned raw, total;
+        int size = secure_read_fragment(s, link, channel, &raw, &total);
+        if (size <= 0)
             return -1;
-        used += (unsigned)size;
-        if (((next_flags & 2U) != 0) != (used == total))
+        ProtectedMessage *pending = &s->control_rx;
+        uint8_t *output = s->control;
+        unsigned limit = sizeof(s->control);
+        if (*channel != 0) {
+#ifdef I30_NATIVE_VIDEO
+            if (*channel != I30_PROJECTION_VIDEO_CHANNEL || !video_buffer)
+                return -1;
+            pending = &s->video_rx;
+            output = video_buffer;
+            limit = video_capacity;
+#else
             return -1;
+#endif
+        }
+        int first = (raw & 1U) != 0, last = (raw & 2U) != 0;
+        unsigned message_flags = raw & 4U;
+        if (first) {
+            if (pending->total)
+                return -1;
+            pending->total = last ? (unsigned)size : total;
+            pending->flags = message_flags;
+        }
+        if (pending->total < 2U || pending->total > limit ||
+            pending->flags != message_flags || (unsigned)size > pending->total - pending->used)
+            return -1;
+        memcpy(output + pending->used, s->wire, (unsigned)size);
+        pending->used += (unsigned)size;
+        if (last != (pending->used == pending->total))
+            return -1;
+        if (last) {
+            unsigned decoded = pending->used;
+            pending->used = pending->total = 0;
+            *flags = message_flags;
+            *message = output;
+            return (int)decoded;
+        }
     }
-    return (int)used;
 }
 
 #ifdef I30_NATIVE_VIDEO
@@ -669,10 +701,11 @@ static int send_media(void *context, unsigned channel, unsigned flags, const uin
     return secure_write(media->session, media->link, channel, flags, message, length);
 }
 
-static int receive_media(void *context, unsigned *channel, unsigned *flags, uint8_t *data, unsigned limit)
+static int receive_media(void *context, unsigned *channel, unsigned *flags, uint8_t *video_buffer,
+                         unsigned capacity, uint8_t **message)
 {
     MediaLink *media = context;
-    return secure_read(media->session, media->link, channel, flags, data, limit);
+    return secure_read(media->session, media->link, channel, flags, video_buffer, capacity, message);
 }
 #endif
 
@@ -685,11 +718,12 @@ static int discover(Session *s, const I30Link *link, void (*start_video)(void *)
         0x42, 6, '0', '0', '.', '0', '6', '1'};
     static const uint8_t disconnect[] = {0, BYEBYE_REQUEST, 8, 1};
     unsigned channel, flags;
+    uint8_t *message;
     if (link->write(link->context, verified, sizeof(verified)) != (int)sizeof(verified))
         return 0;
     OutputDebugStringW(L"i30 CE Android Auto AUTH_COMPLETE sent.\r\n");
-    if (secure_read(s, link, &channel, &flags, s->control, sizeof(s->control)) < 2 ||
-        channel || flags || s->control[0] || s->control[1] != DISCOVERY_REQUEST)
+    if (secure_read(s, link, &channel, &flags, 0, 0, &message) < 2 ||
+        channel || flags || message[0] || message[1] != DISCOVERY_REQUEST)
         return 0;
     OutputDebugStringW(L"i30 CE Android Auto encrypted service discovery request received.\r\n");
 #ifdef I30_NATIVE_VIDEO
@@ -716,22 +750,32 @@ static int discover(Session *s, const I30Link *link, void (*start_video)(void *)
         return 0;
     OutputDebugStringW(L"i30 CE authenticated service discovery completed.\r\n");
     if (secure_write(s, link, 0, 0, disconnect, sizeof(disconnect)))
-        secure_read(s, link, &channel, &flags, s->control, sizeof(s->control));
+        secure_read(s, link, &channel, &flags, 0, 0, &message);
     return 1;
 }
 
-static const CE_WCHAR *handshake_error(br_ssl_engine_context *engine)
+static const CE_WCHAR *handshake_error(Session *s)
 {
-    unsigned error = br_ssl_engine_last_error(engine);
+    unsigned error = br_ssl_engine_last_error(&s->client.eng);
     debug_number(L"i30 CE TLS BearSSL error: ", error);
     if (error >= BR_ERR_RECV_FATAL_ALERT && error < BR_ERR_SEND_FATAL_ALERT) {
-        debug_number(L"i30 CE TLS peer fatal alert: ", error - BR_ERR_RECV_FATAL_ALERT);
+        const unsigned alert = error - BR_ERR_RECV_FATAL_ALERT;
+        debug_number(L"i30 CE TLS peer fatal alert: ", alert);
+        if (alert == 48) /* TLS unknown_ca */
+            return L"i30 CE TLS phone rejected the head unit certificate chain (unknown CA).\r\n";
         return L"i30 CE TLS phone sent a fatal alert.\r\n";
     }
     if (error == BR_ERR_X509_EXPIRED || error == BR_ERR_X509_TIME_UNKNOWN)
         return L"i30 CE TLS phone certificate rejected at guest UTC.\r\n";
-    if (error == BR_ERR_X509_NOT_TRUSTED || error == BR_ERR_X509_BAD_SERVER_NAME)
-        return L"i30 CE TLS phone certificate trust or peer identity rejected.\r\n";
+    if (error == BR_ERR_X509_BAD_SERVER_NAME)
+        return L"i30 CE TLS phone certificate hostname does not match.\r\n";
+    if (error == BR_ERR_X509_NOT_TRUSTED)
+        return s->pinned.rejected ? L"i30 CE TLS phone certificate fingerprint does not match.\r\n" :
+            L"i30 CE TLS phone certificate chain has no trusted anchor.\r\n";
+    if (error == BR_ERR_BAD_CIPHER_SUITE)
+        return L"i30 CE TLS cipher suite rejected.\r\n";
+    if (error == BR_ERR_UNEXPECTED)
+        return L"i30 CE TLS unexpected handshake record or message.\r\n";
     if (error == BR_ERR_UNSUPPORTED_VERSION || error == BR_ERR_BAD_VERSION)
         return L"i30 CE TLS protocol version rejected.\r\n";
     return L"i30 CE TLS engine stopped during handshake.\r\n";
@@ -745,7 +789,7 @@ static const CE_WCHAR *handshake(Session *s, const I30Link *link)
         unsigned state = br_ssl_engine_current_state(engine);
         size_t size;
         if (state & BR_SSL_CLOSED)
-            return handshake_error(engine);
+            return handshake_error(s);
         if (state & BR_SSL_SENDREC) {
             uint8_t *record = br_ssl_engine_sendrec_buf(engine, &size);
             if (!send_record(s, link, record, size))
@@ -759,7 +803,7 @@ static const CE_WCHAR *handshake(Session *s, const I30Link *link)
             if (s->fragment_remaining || s->message_remaining)
                 return L"i30 CE TLS invalid Android Auto handshake frame.\r\n";
             if (br_ssl_engine_last_error(engine))
-                return handshake_error(engine);
+                return handshake_error(s);
             debug_number(L"i30 CE TLS 1.2 authenticated; cipher suite (decimal): ", engine->session.cipher_suite);
             return 0;
         } else if (state & BR_SSL_RECVREC) {
@@ -775,7 +819,7 @@ static const CE_WCHAR *handshake(Session *s, const I30Link *link)
             }
             br_ssl_engine_recvrec_ack(engine, (size_t)count);
         } else {
-            return handshake_error(engine);
+            return handshake_error(s);
         }
     }
     return L"i30 CE TLS handshake exceeded the step limit.\r\n";

@@ -10,7 +10,7 @@ int ReleaseDC(CE_HANDLE, CE_HANDLE);
 void *LocalAlloc(uint32_t, uint32_t);
 void *LocalFree(void *);
 
-enum { VIDEO_CHANNEL = 3, CONTROL = 4, H264_BASELINE = 3 };
+enum { VIDEO_CHANNEL = I30_PROJECTION_VIDEO_CHANNEL, CONTROL = 4, H264_BASELINE = 3 };
 enum { OPEN = 7, CLOSE = 9, PING = 11, GOODBYE = 15, AUDIO_FOCUS_REQUEST = 18 };
 enum { DATA = 0, CODEC = 1, SETUP = 0x8000, START = 0x8001, STOP = 0x8002, FOCUS = 0x8007 };
 enum { PROJECTED = 1, NATIVE = 2, PROJECTED_NO_INPUT = 4 };
@@ -261,14 +261,15 @@ static int media(const I30SecureChannel *wire, Projection *video, unsigned code,
 int i30_projection_video(const I30SecureChannel *wire, CE_HANDLE window)
 {
     const unsigned capacity = I30_VIDEO_INPUT_LIMIT + 10U;
-    uint8_t *message = LocalAlloc(0, capacity);
+    uint8_t *video_buffer = LocalAlloc(0, capacity);
     Projection video = { .window = window, .state = ADVERTISED, .granted_focus = NATIVE };
     int graceful = 0;
-    if (!message)
+    if (!video_buffer)
         return 0;
     while (update_focus(wire, &video, 1)) {
         unsigned channel, flags, code;
-        int size = wire->receive(wire->context, &channel, &flags, message, capacity);
+        uint8_t *message;
+        int size = wire->receive(wire->context, &channel, &flags, video_buffer, capacity, &message);
         if (size < 2)
             break;
         code = ((unsigned)message[0] << 8) | message[1];
@@ -296,6 +297,6 @@ int i30_projection_video(const I30SecureChannel *wire, CE_HANDLE window)
             break;
     }
     reset_video(&video);
-    LocalFree(message);
+    LocalFree(video_buffer);
     return graceful;
 }

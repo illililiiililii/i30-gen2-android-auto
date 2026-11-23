@@ -1,6 +1,7 @@
 """Send an Android Auto test frame over the GD13MY guest's virtual USB port."""
 
 import argparse
+from io import BytesIO
 import json
 from pathlib import Path
 from queue import SimpleQueue
@@ -36,6 +37,8 @@ API = ('GetModuleHandleW', 'RegisterClassW', 'CreateWindowExW', 'DefWindowProcW'
        'CreateProcessW', 'CloseHandle', 'WaitForSingleObject', 'OutputDebugStringW', 'ExitThread', 'Sleep')
 FIRST_FRAME = b'i30 CE projection frame presented.'
 DISPLAY_RELEASED = b'i30 CE projection released the display.'
+LCD_SIZE = (800, 480)
+LCD_RGB_ERROR_LIMIT = 8
 
 
 def build_probe(compiler, scratch, lcd_bench, owned_window, calibrate):
@@ -55,14 +58,33 @@ def build_probe(compiler, scratch, lcd_bench, owned_window, calibrate):
     return bytes(pe_image(*native_sections(elf), api=API))
 
 
-def test_picture(yuv=(81, 90, 240)):
+def test_picture(yuv=(81, 90, 240), *, frame=None):
     encoder = av.CodecContext.create('libx264', 'w')
-    encoder.width, encoder.height, encoder.pix_fmt = 800, 480, 'yuv420p'
+    encoder.width, encoder.height = LCD_SIZE
+    encoder.pix_fmt = 'yuv420p'
     encoder.options = {'preset': 'ultrafast', 'tune': 'zerolatency', 'profile': 'baseline'}
-    frame = av.VideoFrame(800, 480, 'yuv420p')
-    for plane, color in zip(frame.planes, yuv):
-        plane.update(bytes([color]) * plane.buffer_size)
+    if frame is None:
+        frame = av.VideoFrame(*LCD_SIZE, 'yuv420p')
+        for plane, color in zip(frame.planes, yuv):
+            plane.update(bytes([color]) * plane.buffer_size)
+    else:
+        frame = frame.reformat(format='yuv420p')
     return b''.join(bytes(packet) for packet in (*encoder.encode(frame), *encoder.encode(None)))
+
+
+def read_lcd_image(source):
+    with av.open(source) as image:
+        frame = next(image.decode(video=0), None)
+    if frame is None or (frame.width, frame.height) != LCD_SIZE:
+        raise ValueError('Expected a decodable 800×480 image')
+    return frame
+
+
+def packed_rgb(frame):
+    plane = frame.reformat(format='rgb24').planes[0]
+    raw = memoryview(plane)
+    pitch = plane.line_size
+    return b''.join(raw[row * pitch:row * pitch + frame.width * 3] for row in range(frame.height))
 
 
 class VirtualPhone:
@@ -72,7 +94,7 @@ class VirtualPhone:
     device_descriptor = bytes.fromhex('1201000200000040d118002d000100000001')
     config_descriptor = bytes.fromhex('09022000010100c0320904000002ff0000000705810200020007050102000200')
 
-    def __init__(self, context, frame, *, close_after_frame=True):
+    def __init__(self, context, frame, *, close_after_frame=True, interleave_control=False):
         self.controller = HostMusb(self)
         self.context = context
         self.tls = TlsRecords(context, server=True)
@@ -80,8 +102,10 @@ class VirtualPhone:
         self.outgoing = bytearray()
         self.frame = frame
         self.close_after_frame = close_after_frame
+        self.interleave_control = interleave_control
         self.version = self.discovery = self.audio_released = False
         self.acks = 0
+        self.pongs = 0
         self.transfers = []
         self.reset()
 
@@ -124,10 +148,14 @@ class VirtualPhone:
             if message:
                 self.handle(message)
 
-    def send(self, code, data=b'', *, channel=0, flags=ENCRYPTED, fragment_size=0x4000):
+    def send(self, code, data=b'', *, channel=0, flags=ENCRYPTED, fragment_size=0x4000, interleave_ping=False):
         encrypt = self.tls.encrypt if flags & ENCRYPTED else None
-        for frame in encode(Message(channel, flags, code, data), encrypt, fragment_size):
+        if interleave_ping and len(data) + 2 <= fragment_size:
+            raise ValueError('Interleaved control test requires a fragmented video frame')
+        for index, frame in enumerate(encode(Message(channel, flags, code, data), encrypt, fragment_size)):
             self.outgoing.extend(frame)
+            if index == 0 and interleave_ping:
+                self.send(11, b'\x08\x7b')
 
     def handle(self, message):
         channel, code, data = message.channel, message.code, message.payload
@@ -156,13 +184,15 @@ class VirtualPhone:
             self.send(0x8001, b'\x08\x23\x10\x00', channel=3)
             self.send(0x8007, b'\x10\x01', channel=3)
         elif channel == 3 and code == 0x8008 and data == b'\x08\x01\x10\x00':
-            self.send(0, bytes(8) + self.frame, channel=3, fragment_size=1200)
+            self.send(0, bytes(8) + self.frame, channel=3, fragment_size=1200, interleave_ping=self.interleave_control)
         elif channel == 3 and code == 0x8004 and data == b'\x08\x23\x10\x01':
             self.acks += 1
             if self.close_after_frame:
                 self.send(15, b'\x08\x01')
             else:
                 self.send(11, b'\x08\x01')
+        elif channel == 0 and code == 12 and data == b'\x08\x7b' and self.interleave_control:
+            self.pongs += 1
         elif channel == 0 and code == 12 and not self.close_after_frame:
             self.send(11, b'\x08\x01')
         elif channel != 0 or code != 16:
@@ -171,6 +201,8 @@ class VirtualPhone:
 
 class GuestVideoRun(WindowedRun):
     pixels = None
+    reference_rgb = None
+    lcd_mean_error = None
 
     def projection_pixels(self):
         layout, _ = self.display.layout(self.display.active, self.contains_ram)
@@ -198,6 +230,16 @@ class GuestVideoRun(WindowedRun):
         if FIRST_FRAME not in uart or not self.phone_port.acks:
             return
         self.pixels = self.projection_pixels()
+        if self.reference_rgb is not None:
+            report, frame = self.display.capture(self.cpu.mem_read, self.contains_ram)
+            if not frame or report['uniform'] or (report['width'], report['height']) != LCD_SIZE:
+                return
+            actual = packed_rgb(read_lcd_image(BytesIO(frame)))
+            self.lcd_mean_error = sum(abs(a - b) for a, b in zip(actual, self.reference_rgb)) / len(actual)
+            if self.lcd_mean_error <= LCD_RGB_ERROR_LIMIT:
+                self.output.with_suffix('.png').write_bytes(frame)
+                self.closing.set()
+            return
         if self.pixels and all(red > 210 and green < 35 and blue < 35 for red, green, blue in self.pixels):
             self.closing.set()
 
@@ -296,6 +338,7 @@ class ReplugNativeMenuRun(NativeMenuVideoRun):
 def verify(args):
     args.output.mkdir(parents=True, exist_ok=True)
     manifest = json.loads(args.manifest.read_text(encoding='utf-8-sig'))
+    image = read_lcd_image(str(args.frame_image)) if args.frame_image else None
     kernel.VIRTUAL_CPU_UNITS_PER_SECOND = round(args.boot_clock_mhz * 1_000_000)
     with (TemporaryDirectory(prefix='gd13my-virtual-phone-', dir=args.output.parent) as staging,
           test_identity(args.openssl) as (cert, key, ctx)):
@@ -313,7 +356,8 @@ def verify(args):
             files.writebytes(navi + 'i30-client.pem', cert.read_bytes())
             files.writebytes(navi + 'i30-client-key.pem', key.read_bytes())
             files.writebytes(navi + 'i30-peer.txt', b'i30-mock.local\n')
-        phone = VirtualPhone(ctx, test_picture(), close_after_frame=not args.native_menu)
+        phone = VirtualPhone(ctx, test_picture(frame=image), close_after_frame=not args.native_menu,
+                             interleave_control=args.interleave_control)
         with args.disk.open('rb') as disk, patch.open('rb') as app:
             media = AppPartitionOverlay(disk, app)
             media.enable_host_utc(manifest['emulator_utc_offset'])
@@ -328,6 +372,8 @@ def verify(args):
                          usb_clock_units=round(args.usb_clock_mhz * 1_000_000),
                          **({'display_mode': 2, 'assist_navi_start': True, 'assist_touch_calibration': True}
                             if args.native_menu else {}))
+            if image is not None:
+                run.reference_rgb = packed_rgb(image)
             renderer = GuestGL(run, args.native_menu) if args.native_menu else None
             started = monotonic()
             try:
@@ -342,6 +388,11 @@ def verify(args):
                       'boot_clock_mhz': args.boot_clock_mhz,
                       'usb_clock_mhz': kernel.VIRTUAL_CPU_UNITS_PER_SECOND / 1_000_000,
                       'transfers': phone.transfers, 'wall_seconds': round(monotonic() - started, 3)}
+            if image is not None:
+                status['source_image'] = str(args.frame_image)
+                status['lcd_rgb_mean_absolute_error'] = run.lcd_mean_error
+            if args.interleave_control:
+                status['interleaved_control_pongs'] = phone.pongs
             if args.native_menu:
                 status.update(stock_navigation=run.navigation_ready, stock_menu=NAVIGATION_MENU_ACK in run.uart.output,
                               stock_consent=b'BUTTON_PUSH_AGREE_ON' in run.uart.output,
@@ -356,6 +407,11 @@ def verify(args):
                               replug_pixels_rgb=run.replug_pixels)
     (args.output / 'virtual-phone.json').write_text(json.dumps(status, indent=2) + '\n', encoding='utf-8')
     print(json.dumps(status, indent=2))
+    if args.interleave_control and status['interleaved_control_pongs'] != 1:
+        return False
+    if image is not None:
+        return bool(status['mutual_tls'] and status['media_acks'] and run.lcd_mean_error is not None and
+                    run.lcd_mean_error <= LCD_RGB_ERROR_LIMIT)
     video_rendered = bool(status['media_acks'] and status['lcd_pixels_rgb'] and all(
         red > 210 and green < 35 and blue < 35 for red, green, blue in status['lcd_pixels_rgb']))
     return video_rendered and (not args.replug_after_frame or bool(status['replug_pixels_rgb'])) and (
@@ -373,6 +429,9 @@ def main():
     parser.add_argument('--compiler', type=Path, required=True)
     parser.add_argument('--openssl', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--frame-image', type=Path, help='Project an 800×480 local image during an isolated LCD test')
+    parser.add_argument('--interleave-control', action='store_true',
+                        help='Send a control ping between fragments of a video frame during an isolated LCD test')
     parser.add_argument('--seconds', type=int, default=230)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--lcd-bench', action='store_true', help='Use the display in the isolated LCD test')
@@ -385,6 +444,10 @@ def main():
     parser.add_argument('--usb-clock-mhz', type=float, default=64)
     parser.add_argument('--boot-clock-mhz', type=float, default=4.5)
     args = parser.parse_args()
+    if args.frame_image and not args.lcd_bench:
+        parser.error('--frame-image requires --lcd-bench')
+    if args.interleave_control and not args.lcd_bench:
+        parser.error('--interleave-control requires --lcd-bench')
     if args.native_menu and not json.loads(args.manifest.read_text(encoding='utf-8-sig')).get('stock_display_sha256'):
         parser.error('--native-menu requires an image with the stock display publisher')
     if args.replug_after_frame and not args.native_menu:

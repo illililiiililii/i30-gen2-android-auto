@@ -145,6 +145,9 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(result.errors, [])
         self.assertEqual(result.active_sessions, 1)
         self.assertTrue(result.graceful_shutdown)
+        tls, = [fields for event, fields in events if event == "tls_authenticated"]
+        self.assertEqual(tls["version"], "TLSv1.2")
+        self.assertTrue(tls["cipher"])
         self.assertEqual(backend.media_acks, 2)
         self.assertEqual(backend.peer_pongs, 1)
         self.assertEqual([item[0] for item in backend.requests], [51, 52, 52, 52, 52, 53])
@@ -217,11 +220,13 @@ class SessionTests(unittest.TestCase):
         self.assertEqual((backend.claimed, backend.closed, backend.media_acks), (1, 1, 0))
 
     def test_bad_certificate_pin_and_name_fail_closed(self):
-        for client in (client_context(self.cert, None, "00" * 32, self.cert, self.key),
-                       client_context(self.cert, "wrong.local", None, self.cert, self.key)):
+        for client, message in (
+                (client_context(self.cert, None, "00" * 32, self.cert, self.key), "fingerprint does not match"),
+                (client_context(self.cert, "wrong.local", None, self.cert, self.key),
+                 r"peer certificate verification failed \(\d+\): .*mismatch")):
             result, _ = self.simulate(client=client)
             self.assertEqual(result.active_sessions, 0)
-            self.assertIn("TLS", result.errors[0])
+            self.assertRegex(result.errors[0], message)
 
     def test_repeated_sessions_release_python_allocations(self):
         identity = mock_client(self.cert, self.key)
