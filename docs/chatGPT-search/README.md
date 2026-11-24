@@ -6,7 +6,7 @@ GD13MY(현대 i30 GD 2013 순정 내비) Android Auto 이식 관련 ChatGPT 조�
 
 | 문서 | 내용 |
 |---|---|
-| (추가 예정) | |
+| [GD13MY_ANDROID_AUTO_RESEARCH_HANDOFF.md](GD13MY_ANDROID_AUTO_RESEARCH_HANDOFF.md) | GPT가 만든 안드로이드 오토 GD13MY에 대한 핸드오프 분석/조사서 파일|
 
 ## 참고
 
