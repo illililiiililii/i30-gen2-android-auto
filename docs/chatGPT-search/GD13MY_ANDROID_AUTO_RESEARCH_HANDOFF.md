@@ -124,3 +124,67 @@ AARE는 사용자 승인으로 자체 시험용 HU 인증서를 신뢰할 수 �
 WinCE 네이티브 수신기 및 순정 UI 통합은 상당한 구현 근거가 있다. 다만 Google 순정 앱의 인증 성공은 신뢰된 HU 신원 확보에 달려 있고 실제 하드웨어 성능은 아직 불확실하다. 이전 전체 작업량 약 55% 평가는 주관적인 진행도이지 성공 확률이 아니다.
 
 가장 중요한 다음 이정표는 **Google 순정 Android Auto 앱과 GD13MY 네이티브 수신기 사이의 TLS 완료 및 암호화 서비스 탐색**이다. 순정 펌웨어 비교 연구는 이 장애물과 실기 성능 문제를 줄일 새로운 단서를 찾기 위한 병행 과제다.
+
+---
+
+## 추가 연구 부록 — OMAP3530 영상 가속, 초기 업데이트 패키지 및 참고 구현
+
+추가일: 2026-11-24. 아래는 후속 조사 후보이며, 링크된 자료의 최신 접근 가능 여부와 실제 바이너리 호환성은 별도로 검증한다. 기존 인증 연구와 병행하되 현재 구현을 대체하거나 실기 성공을 전제하지 않는다.
+
+### A. TI OMAP3530 공식 기술 자료
+
+OMAP3530은 Cortex-A8, NEON, C64x+ DSP, IVA2.2 멀티미디어 서브시스템 및 PowerVR SGX 그래픽 기능을 갖춘 SoC다. DSP 기반 영상 처리 가능성은 있으나 실제 GD13MY 보드에서의 활성화 여부, WinCE 드라이버, 코덱 라이선스 및 지원 프로파일은 미확인이다. GPU가 존재한다는 사실만으로 H.264 하드웨어 디코딩을 보장하지 않는다.
+
+| 자료 | 조사 목적 |
+|---|---|
+| [OMAP3530 Datasheet](https://www.ti.com/lit/ds/symlink/omap3530.pdf) | SoC 구성, 메모리 및 주변장치 |
+| [OMAP35x Technical Reference Manual](https://www.ti.com/lit/ug/spruf98y/spruf98y.pdf) | MUSB, DMA, INTC, DISPC, DSP 레지스터와 에뮬레이터 검증 |
+| [TI OMAP35x CODECS](https://www.ti.com/tool/OMAP35XCODECS) | 최적화 코덱, 지원 플랫폼 및 배포 조건 |
+| [DaVinci/OMAP Workshop](https://software-dl.ti.com/trainingTTO/trainingTTO_public_sw/davinci/TTO_Workshop_%28v2.10%29/DaVinci-OMAP_Workshop_%28v2.1%29.pdf) | DSP 및 Codec Engine 구조 |
+| [OMAP3530 Errata](https://www.ti.com/lit/er/sprz278f/sprz278f.pdf) | 실리콘 리비전별 USB/DMA 등 알려진 제약 |
+
+추가 확보 대상: OMAP3530 WinCE 6.0 BSP, OEM adaptation layer 및 USB host 드라이버 자료, WinCE용 DSP/Codec Engine SDK, 영상 코덱 지원 목록, 순정 보드 서비스 매뉴얼과 회로도. 실제 자료 확보 여부는 별도 기록한다.
+
+### B. 순정 영상 처리 경로 분석
+
+기존 역공학에서 확인된 `LibUSB.dll`, `LibVideo.dll`, `LibMMCodec.dll`, `LibSound.dll`을 우선 조사한다. `LibMMCodec.dll` 존재 자체는 DSP H.264 지원의 증거가 아니다.
+
+1. REA/Ghidra로 PE 아키텍처, import/export, 호출 관계, 문자열, IOCTL, DSP 관련 드라이버 의존성을 조사한다.
+2. 기존 순정 영상 재생 경로에서 코덱 초기화, 입력 버퍼, SPS/PPS 및 NAL 처리, 출력 픽셀 포맷, stride, 메모리 소유권, 종료 절차를 식별한다.
+3. 실제 하드웨어 가속 호출인지 CPU 디코딩인지 구분한다. 에뮬레이터의 DSP 미구현을 실제 보드의 미지원으로 해석하지 않는다.
+4. 확인된 API만 별도 어댑터로 연결하고 기존 h264bsd 경로를 폴백으로 유지한다. 확인 전 순정 DLL의 ABI를 추측해 호출하지 않는다.
+5. 동일한 800×480 시험 영상으로 프레임률, 디코딩 지연, CPU 사용량, 메모리, 프레임 드롭을 비교한다. 실기와 에뮬레이터 수치를 분리한다. 30fps는 초기 목표이지 달성된 성능이 아니다.
+6. 화면 전환, 후방카메라 우선권, 오디오, 터치 및 종료 시 자원 회수를 회귀 시험한다.
+
+### C. 현대자동차 초기 Android Auto 업데이트 추가 단서
+
+- [2020년 TSB 20-BE-008H](https://static.nhtsa.gov/odi/tsbs/2020/MC-10177130-0001.pdf): 초기 폰 프로젝션 추가 업데이트의 후속 서비스 공지. 패키지 부품 번호 `98000-AACP1`(GD/DH/LF/TL 등), `98000-AACP2`(HG/FS/LF HEV/PHEV 등)를 검색 단서로 사용한다. 정확한 적용 차종과 연식은 원문 표를 기준으로 재확인한다.
+- [2016년 서비스 공지](https://static.nhtsa.gov/odi/tsbs/2016/SB-10081532-0699.pdf): 북미 Elantra GT GD의 초기 AA 지원 버전 `ST.GD.USA.E509.160417` 비교 후보.
+- [북미 공식 업데이트 사이트](https://update.hyundai.com/US/EN/updateNoticeView/software-version): `GDAS.S4AMC.US` 모델의 현재 제공 버전 및 다운로드 가능 여부 확인.
+
+부품 번호는 다운로드 링크나 개별 펌웨어 식별자와 동일하지 않다. 정식 확보 가능한 패키지를 우선하며 AA 지원 이전/최초 지원/최신 버전의 파일 목록, 해시, OS/ABI, SDK 및 공개 인증서 메타데이터를 비교한다. 다른 차량용 펌웨어를 GD13MY에 설치하지 않는다.
+
+### D. 추가 오픈소스 참고 자료
+
+| 프로젝트 | 조사할 내용 | 주의점 |
+|---|---|---|
+| [stf-ftw/LibAuto](https://github.com/stf-ftw/LibAuto) | USB 수신기, TLS, 영상·오디오·터치·마이크, 재연결 | README 주장과 실제 코드·실폰 시험을 구분 |
+| [mretallack/AndroidAuto](https://github.com/mretallack/AndroidAuto) | 장시간 세션, USB 전원 및 연결 실패 복구 | 현재 프로젝트와 통신 역할이 다를 수 있음 |
+| [rgerganov/gen5fw](https://github.com/rgerganov/gen5fw) | 현대·기아 Gen5 패키지 분석 도구 및 파일 구조 | Gen2 직접 호환 미확인 |
+| [cantcs/HKG_Gen5W_ReverseEngineer](https://github.com/cantcs/HKG_Gen5W_ReverseEngineer) | Gen5W 업데이트 에이전트, 무결성 검증 구조 | 세대 차이, 실제 수정 이미지 설치 금지 |
+
+각 저장소의 접근 가능 여부, 커밋 SHA, 라이선스, 실제 관련 함수와 테스트 기록을 확인한 후 참고한다. AllGo/Motrex의 초기 폰 프로젝션 SDK 및 TI/WinCE 자료도 정식 공개·평가 경로를 조사한다.
+
+### E. 병행 연구 우선순위 및 산출물
+
+| 우선순위 | 작업 | 완료 기준 |
+|---|---|---|
+| 1 | 인증 및 초기 OEM 펌웨어 비교 | 확보 경로, OS/ABI, TLS 구조, 인증 공급 방식 및 권한 확인 |
+| 2 | 순정 DSP 영상 가속 | LibMMCodec 호출 관계, 지원 코덱 및 가속 가능성 근거 확보 |
+| 3 | USB 안정성 | TRM/BSP와 기존 MUSB 모델 비교, timeout·잔류 프레임·재연결 분석 |
+| 4 | 에뮬레이터 정확도 | 레지스터/IRQ/DMA 동작과 공식 문서의 차이 기록 |
+| 5 | 배포 및 복구 | 원본 백업, 패키지 무결성, 안전한 복구 계획 문서화 |
+
+권장 산출물: `docs/OEM_FIRMWARE_COMPARISON.md`, `docs/OMAP3530_VIDEO_ACCELERATION.md`, `docs/USB_STABILITY_RESEARCH.md`. 분석마다 출처 URL, 확인 날짜, 파일 해시, 함수/주소, 확인 사실과 가설, 미확인 항목을 기록한다. 기존 main의 동작하는 코드는 보존하고 실험은 별도 브랜치에서 진행한다. 원본 펌웨어, 비공개 SDK, 개인키 및 민감한 인증 자료는 저장소에 올리지 않는다.
+
+인증 해결과 영상 가속은 독립적인 과제다. 모의 영상 출력 성공은 실폰 인증 성공을 의미하지 않으며, 영상 가속 발견도 오류 07을 해결하지 않는다. 최종 목표는 여전히 별도 앱·동글 없는 순정 Google Android Auto의 실제 GD13MY 통합이다.
