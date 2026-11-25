@@ -24,3 +24,4 @@
 
 - Open Headunit 유지보수자의 DHU 출처 설명과 별도 허가를 알지 못한다는 답변을 확인했다. 공개 Reference 리프는 BearSSL과 GAL 클라이언트 목적 검증을 통과했고, AASDK JVC 리프의 원본 유효기간 인코딩 오류를 확인했다.
 - ADB 연결과 WinCE 이미지·ARM DLL 매니페스트를 확인했다. 승인 범위가 입증된 시험 신원은 확보되지 않았다. 이번 실행은 공개 파일 검증에서 종료했으며 상호 TLS와 실화면 시험에 필요한 등록 조건을 기록했다. [시험 신원 검토](../Codex-authentication-resolution/REAL_PHONE_TEST_RESULTS.md#공개-시험-신원-후보-재검토)
+- 후속 오프라인 검증에서 Open Headunit 최초 확인 커밋 및 4.1.0-beta2의 Git 메타데이터와 로컬 원본이 일치했다. RSA 공개 SPKI 전체가 일치했고 최신 WinCE ARM DLL이 TLS 1.2 ClientHello를 생성했다. 이 신원의 실제 폰 사용 권한과 상호 TLS 완료는 확인되지 않았다. [오프라인 ARM 결과](../Codex-authentication-resolution/REAL_PHONE_TEST_RESULTS.md#open-headunit-자료의-오프라인-arm-검증)
