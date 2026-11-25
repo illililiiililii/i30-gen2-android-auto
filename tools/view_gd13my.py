@@ -810,7 +810,9 @@ def main():
         if pressed == 'projection':
             projection.queue('pointer', action, x, y)
         else:
-            pointer.put((x, y, down))
+            # A quick desktop click can otherwise release before the .061 touch driver debounces it.
+            for _ in range(6 if action == 'ACTION_DOWN' else 1):
+                pointer.put((x, y, down))
         if not down:
             pressed = None
 

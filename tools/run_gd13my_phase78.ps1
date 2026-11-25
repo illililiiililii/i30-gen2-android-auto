@@ -9,6 +9,8 @@ param(
     [switch]$NativeTls = $true,
     [switch]$OwnedWindowCandidate,
     [string]$StockProjectionImage,
+    [string]$DiskPath,
+    [string]$OutputDirectory,
     [string]$StatePath
 )
 
@@ -16,7 +18,7 @@ $ErrorActionPreference = 'Stop'
 $phaseRoot = Split-Path -Parent $PSScriptRoot
 $phaseBuild = Join-Path $phaseRoot 'build\gd13my-native-menu'
 $phasePython = Join-Path $env:LOCALAPPDATA 'i30-phase2-venv\Scripts\python.exe'
-$phaseDisk = Join-Path $env:LOCALAPPDATA 'i30-gd13my\gd13my-media-v2.img'
+$phaseDisk = if ($DiskPath) { $DiskPath } else { Join-Path $env:LOCALAPPDATA 'i30-gd13my\gd13my-media-v2.img' }
 $phaseApp = Join-Path $phaseBuild 'gd13my-aa-native-menu.img'
 $clockArgs = @()
 if (-not $StockProjectionImage -and -not $OwnedWindowCandidate -and -not $PSBoundParameters.ContainsKey('NativeTls')) {
@@ -67,7 +69,7 @@ if (-not $StatePath) {
     $StatePath = Join-Path $phaseBuild 'user-diska.sqlite3'
 }
 
-$outputDir = Join-Path $phaseRoot 'build\gd13my-boot'
+$outputDir = if ($OutputDirectory) { $OutputDirectory } else { Join-Path $phaseRoot 'build\gd13my-boot' }
 $tempDir = Join-Path $phaseRoot 'build\temp'
 [void][IO.Directory]::CreateDirectory($tempDir)
 if ($FastStorage) {

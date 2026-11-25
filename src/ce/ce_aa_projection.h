@@ -14,6 +14,7 @@ typedef struct I30SecureChannel {
     /* Complete control messages use receiver-owned storage so partial video stays in video_buffer. */
     int (*receive)(void *context, unsigned *channel, unsigned *flags, uint8_t *video_buffer,
                    unsigned capacity, uint8_t **message, I30ReadPoll poll, void *poll_context);
+    void (*presented)(void *context);
 } I30SecureChannel;
 
 /* Returns a verified projection target while the stock display permits drawing. */

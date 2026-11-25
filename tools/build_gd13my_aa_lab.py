@@ -38,7 +38,7 @@ def read_ce_app(path, *, dll=False):
 
 
 def package(base, probe, output, *, settings=None, navigation_patch=None, usb_client=None, startup_patch=None,
-            native_projection=None, stock_display=None, compact=False, emulator_utc=False):
+            native_projection=None, stock_display=None, compact=False, emulator_utc=False, aare_identity=None):
     from pyfatfs.PyFatFS import PyFatFS
 
     if output.exists():
@@ -53,6 +53,19 @@ def package(base, probe, output, *, settings=None, navigation_patch=None, usb_cl
         raise ValueError('The projection module requires the native USB client')
     if stock_display is not None and native_projection is None:
         raise ValueError('The stock display patch requires the navigation projection module')
+    if aare_identity is not None:
+        if stock_display is None or not compact or not emulator_utc:
+            raise ValueError('AARE credentials require a compact emulator image with stock display and host UTC')
+        for suffix in ('ca.pem', 'client.pem', 'client-key.pem', 'peer-sha256.txt'):
+            name = 'i30-aare-' + suffix
+            data = (aare_identity / name).read_bytes()
+            if not data or len(data) > 16 * 1024:
+                raise ValueError(f'Invalid AARE credential length: {name}')
+            apps[NAVI_PATH + name] = data
+        pin = apps[NAVI_PATH + 'i30-aare-peer-sha256.txt'].strip()
+        if len(pin) != 64 or any(value not in b'0123456789abcdefABCDEF' for value in pin):
+            raise ValueError('AARE requires a SHA-256 fingerprint of the enrolled phone leaf')
+        apps[NAVI_PATH + 'i30-aare.opt'] = b'1\n'
     if startup_patch is not None and usb_client is None:
         raise ValueError('The startup patch requires the native USB settings app')
     if emulator_utc and (not compact or startup_patch is None):
@@ -174,6 +187,8 @@ def package(base, probe, output, *, settings=None, navigation_patch=None, usb_cl
                                           for name in DISPLAY_HASHES}
     if startup_patch is not None:
         report['startup_sha256'] = sha256(replacements[STARTUP_PATH]).hexdigest()
+    if aare_identity is not None:
+        report['tls_profile'] = 'aare'
     if utc_offset is not None:
         report['emulator_utc_offset'] = utc_offset
     return report
@@ -192,13 +207,14 @@ def main():
     parser.add_argument('--startup-patch', type=Path, help='Replace the .061 system manager with the opt-in startup patch')
     parser.add_argument('--compact', action='store_true', help='Copy and audit only DiskA for --app-volume')
     parser.add_argument('--emulator-utc', action='store_true', help='Reserve a read-only host UTC mailbox on DiskA')
+    parser.add_argument('--aare-identity', type=Path, help='Provision an enrolled AARE identity in the emulator image')
     args = parser.parse_args()
     if args.probe is None and args.settings is None:
         parser.error('Supply a CE probe or --settings application')
     report = package(args.base, args.probe, args.output, settings=args.settings,
                      navigation_patch=args.navigation_patch, usb_client=args.usb_client,
                      startup_patch=args.startup_patch, native_projection=args.native_projection, stock_display=args.stock_display,
-                     compact=args.compact, emulator_utc=args.emulator_utc)
+                     compact=args.compact, emulator_utc=args.emulator_utc, aare_identity=args.aare_identity)
     print(json.dumps(report, indent=2))
 
 

@@ -1,5 +1,6 @@
 #include "ce_aa_tls.h"
 #include "ce_minimal.h"
+#include "ce_aa_usb.h"
 #include "bearssl.h"
 #ifdef I30_NATIVE_VIDEO
 #include "ce_aa_projection.h"
@@ -9,6 +10,7 @@
 
 CE_HANDLE LocalAlloc(uint32_t, uint32_t);
 CE_HANDLE LocalFree(CE_HANDLE);
+uint32_t GetFileAttributesW(const CE_WCHAR *);
 int CeGenRandom(uint32_t size, uint8_t *bytes);
 void GetSystemTimeAsFileTime(uint64_t *time);
 
@@ -570,7 +572,7 @@ static int client_chain_valid(Session *s, unsigned count, Utc now)
     return 1;
 }
 
-static const CE_WCHAR *configure(Session *s, CE_HANDLE ca_file)
+static const CE_WCHAR *configure(Session *s, CE_HANDLE ca_file, int aare)
 {
     uint8_t seed[32], digest[32];
     br_sha256_context hash;
@@ -587,8 +589,9 @@ static const CE_WCHAR *configure(Session *s, CE_HANDLE ca_file)
     }
     if (!read_utc(&now))
         return L"i30 CE TLS guest UTC unavailable or invalid.\r\n";
-    name_size = bounded_file(TLS_PATH L"i30-peer.txt", s->peer, sizeof(s->peer) - 1U);
-    pin_size = bounded_file(TLS_PATH L"i30-peer-sha256.txt", pin, sizeof(pin));
+    name_size = aare ? 0U : bounded_file(TLS_PATH L"i30-peer.txt", s->peer, sizeof(s->peer) - 1U);
+    pin_size = bounded_file(aare ? TLS_PATH L"i30-aare-peer-sha256.txt" : TLS_PATH L"i30-peer-sha256.txt",
+                            pin, sizeof(pin));
     name_size = trim_line(s->peer, name_size);
     pin_size = trim_line(pin, pin_size);
     if ((name_size != 0) == (pin_size != 0) ||
@@ -601,7 +604,8 @@ static const CE_WCHAR *configure(Session *s, CE_HANDLE ca_file)
             return L"i30 CE TLS peer hostname or fingerprint configuration invalid.\r\n";
     }
     s->peer[name_size] = '\0';
-    int identity_count = read_credentials(s, TLS_PATH L"i30-client.der", TLS_PATH L"i30-client.pem",
+    int identity_count = read_credentials(s, aare ? TLS_PATH L"i30-aare-client.der" : TLS_PATH L"i30-client.der",
+                                          aare ? TLS_PATH L"i30-aare-client.pem" : TLS_PATH L"i30-client.pem",
                                           s->client_cert, sizeof(s->client_cert), s->identity, CLIENT_CHAIN_MAX, 0);
     if (identity_count < 0) {
         debug_file_error(identity_count);
@@ -623,7 +627,8 @@ static const CE_WCHAR *configure(Session *s, CE_HANDLE ca_file)
         return L"i30 CE TLS head unit certificate is not yet valid at guest UTC.\r\n";
     if (utc_before(end, now))
         return L"i30 CE TLS head unit certificate expired at guest UTC.\r\n";
-    result = read_credentials(s, TLS_PATH L"i30-client-key.der", TLS_PATH L"i30-client-key.pem",
+    result = read_credentials(s, aare ? TLS_PATH L"i30-aare-client-key.der" : TLS_PATH L"i30-client-key.der",
+                              aare ? TLS_PATH L"i30-aare-client-key.pem" : TLS_PATH L"i30-client-key.pem",
                               s->key_der, sizeof(s->key_der), &key_file, 1, 1);
     if (result < 0) {
         debug_file_error(result);
@@ -905,6 +910,7 @@ static int secure_read(Session *s, const I30Link *link, unsigned *channel, unsig
 typedef struct MediaLink {
     Session *session;
     const I30Link *link;
+    void (*presented)(void *);
 } MediaLink;
 
 static int send_media(void *context, unsigned channel, unsigned flags, const uint8_t *message, unsigned length)
@@ -919,9 +925,16 @@ static int receive_media(void *context, unsigned *channel, unsigned *flags, uint
     MediaLink *media = context;
     return secure_read(media->session, media->link, channel, flags, video_buffer, capacity, message, poll, poll_context);
 }
+
+static void present_media(void *context)
+{
+    MediaLink *media = context;
+    media->presented(media->link->context);
+}
 #endif
 
-static int discover(Session *s, const I30Link *link, void (*start_video)(void *))
+static int discover(Session *s, const I30Link *link, void (*start_video)(void *),
+                    void (*video_presented)(void *))
 {
     static const uint8_t verified[] = {0, 3, 0, 4, 0, 4, 8, 0}; /* AuthResponse(status=0). */
     /* ServiceDiscoveryResponse with GD13MY identity and no advertised media channels. */
@@ -960,14 +973,15 @@ static int discover(Session *s, const I30Link *link, void (*start_video)(void *)
             return 0;
         OutputDebugStringW(L"i30 CE authenticated service discovery completed.\r\n");
         start_video(link->context);
-        MediaLink media = {s, link};
-        I30SecureChannel transport = {&media, send_media, receive_media};
+        MediaLink media = {s, link, video_presented};
+        I30SecureChannel transport = {&media, send_media, receive_media, present_media};
         if (!i30_projection_video(&transport, surface, input))
             OutputDebugStringW(L"i30 CE projection released the display.\r\n");
         return 1;
     }
 #endif
     (void)start_video;
+    (void)video_presented;
     if (!secure_write(s, link, 0, 0, identity, sizeof(identity)))
         return 0;
     OutputDebugStringW(L"i30 CE authenticated service discovery completed.\r\n");
@@ -1052,9 +1066,13 @@ static const CE_WCHAR *handshake(Session *s, const I30Link *link)
     return L"i30 CE TLS handshake exceeded the step limit.\r\n";
 }
 
-int i30_ce_authenticate(const I30Link *link, void (*start_video)(void *))
+enum I30AuthResult i30_ce_authenticate(const I30Link *link, void (*start_video)(void *),
+                                      void (*video_presented)(void *))
 {
-    CE_HANDLE ca_file = open_credential(TLS_PATH L"i30-ca.der", TLS_PATH L"i30-ca.pem");
+    uint32_t attributes = GetFileAttributesW(I30_AA_AARE_MODE);
+    int aare = attributes != 0xffffffffU && !(attributes & 0x10U);
+    CE_HANDLE ca_file = open_credential(aare ? TLS_PATH L"i30-aare-ca.der" : TLS_PATH L"i30-ca.der",
+                                         aare ? TLS_PATH L"i30-aare-ca.pem" : TLS_PATH L"i30-ca.pem");
     if (ca_file == (CE_HANDLE)-1) {
         if (missing_file(GetLastError())) {
             OutputDebugStringW(L"i30 CE TLS waiting for enrolled trust material.\r\n");
@@ -1062,24 +1080,35 @@ int i30_ce_authenticate(const I30Link *link, void (*start_video)(void *))
             debug_file_error(FILE_UNREADABLE);
             OutputDebugStringW(L"i30 CE TLS trust CA missing, unreadable or invalid.\r\n");
         }
-        return 1;
+        return I30_AUTH_CONFIG;
     }
     Session *session = LocalAlloc(0x40, sizeof(*session)); /* Fixed, zero initialized. */
     if (!session) {
         CloseHandle(ca_file);
         OutputDebugStringW(L"i30 CE TLS session allocation failed.\r\n");
-        return 0;
+        return I30_AUTH_FAILED;
     }
-    const CE_WCHAR *status = configure(session, ca_file);
-    const int configuration_required = status != 0;
-    if (!status)
+    const CE_WCHAR *status = configure(session, ca_file, aare);
+    enum I30AuthResult result = I30_AUTH_CONFIG;
+    if (!status) {
         status = handshake(session, link);
-    if (!status && !discover(session, link, start_video))
-        status = L"i30 CE service discovery incomplete.\r\n";
+        unsigned error = br_ssl_engine_last_error(&session->client.eng);
+        result = I30_AUTH_FAILED;
+        if (error == BR_ERR_RECV_FATAL_ALERT + 42U || error == BR_ERR_RECV_FATAL_ALERT + 46U ||
+            error == BR_ERR_RECV_FATAL_ALERT + 48U)
+            result = I30_AUTH_PHONE_REFUSED;
+        if (!status) {
+            result = I30_AUTH_ENDED;
+            if (!discover(session, link, start_video, video_presented)) {
+                status = L"i30 CE service discovery incomplete.\r\n";
+                result = I30_AUTH_MEDIA_FAILED;
+            }
+        }
+    }
     if (status)
         OutputDebugStringW(status);
     for (unsigned i = 0; i < sizeof(*session); ++i)
         ((volatile uint8_t *)session)[i] = 0;
     LocalFree(session);
-    return configuration_required;
+    return result;
 }

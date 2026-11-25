@@ -66,12 +66,47 @@ constexpr uint32_t wm_stock_display_changed = 0x8001;
 constexpr uintptr_t display_timer = 1;
 constexpr int black_brush = 4, dark_gray_brush = 3;
 constexpr CeRect map_button{300, 324, 500, 370};
+constexpr CeRect cancel_button{150, 345, 390, 407}, help_button{410, 345, 650, 407};
+constexpr CeRect previous_button{72, 377, 252, 439}, next_button{310, 377, 490, 439};
+constexpr CeRect close_button{548, 377, 728, 439};
+
+enum class Button { None, Cancel, Help, Previous, Next, Close };
+struct GuidePage { const CE_WCHAR *title, *number; const CE_WCHAR *lines[5]; };
+constexpr GuidePage guide[] = {
+    {L"AARE 소개", L"1 / 4", {
+        L"AARE는 내비 화면에 앱을 표시하는 오픈소스 앱입니다.",
+        L"휴대폰에 AARE를 설치하고 USB로 연결하세요.",
+        L"AARE 1.6.0은 Android 6 이상에 설치할 수 있습니다.",
+        L"USB 화면과 터치에 루팅이 필요하지 않습니다.",
+        L"일부 앱의 화면 또는 오디오에는 추가 권한이 필요합니다."}},
+    {L"AARE 설치", L"2 / 4", {
+        L"휴대폰에서 github.com/prototux/AARE/releases",
+        L"공식 릴리스의 APK를 받아 실행하세요.",
+        L"설치가 차단되면 APK를 연 앱에 설치 권한을 허용하세요.",
+        L"AARE의 Advanced → Phone certificates를 여세요.",
+        L"이 수신기와 함께 준비한 휴대폰 인증서를 가져오세요."}},
+    {L"USB 연결", L"3 / 4", {
+        L"AARE를 열고 데이터 통신용 USB 케이블을 연결하세요.",
+        L"USB 앱 선택에서 AARE를 고르고 접근을 허용하세요.",
+        L"첫 연결에서는 휴대폰이 표시한 인증서 지문을 확인하세요.",
+        L"지문이 일치하면 Trust를 누르고 USB를 다시 연결하세요.",
+        L"연결되면 이 내비 화면을 터치해 AARE를 조작하세요."}},
+    {L"연결 문제 해결", L"4 / 4", {
+        L"충전만 되면 데이터 케이블과 USB 포트를 확인하세요.",
+        L"AARE를 다시 열고 USB 앱 선택과 접근 권한을 확인하세요.",
+        L"인증 오류가 나면 양쪽에 등록한 인증서와 지문을 확인하세요.",
+        L"앱이 열리지 않으면 Android 버전과 공식 APK를 확인하세요.",
+        L"화면이 나오지 않거나 연결이 끊기면 USB를 다시 연결하세요."}},
+};
+constexpr unsigned guide_pages = sizeof(guide) / sizeof(guide[0]);
 
 struct Projection {
     CE_HANDLE map, cancel, worker, video, heading, body;
     volatile int32_t references, status;
     int32_t displayed, painted;
-    bool closing, back_pressed;
+    bool closing, aare;
+    Button pressed;
+    unsigned guide_page;
     bool touch_enabled, touch_pressed, touch_reset;
     unsigned touch_head, touch_count;
     uint32_t touch_position;
@@ -122,14 +157,21 @@ bool hide(CE_HANDLE window)
            SetWindowPos(window, nullptr, 0, 0, 0, 0, visibility_flags | swp_hide);
 }
 
-const CE_WCHAR *status_text(int32_t status)
+const CE_WCHAR *status_text(int32_t status, bool aare)
 {
     switch (status) {
     case I30_USB_WAITING: return L"휴대폰 연결 대기 중";
-    case I30_USB_CONNECTING: return L"휴대폰 USB 연결 중";
-    case I30_USB_AUTHENTICATING: return L"휴대폰 연결됨 · 인증 확인 중";
-    case I30_USB_AUTH_REQUIRED: return L"휴대폰 연결됨 · 헤드유닛 인증 설정 필요";
-    case I30_USB_RECONNECT: return L"연결이 끝났습니다. USB를 다시 연결해 주세요.";
+    case I30_USB_CONNECTING: return L"USB 연결 준비 중";
+    case I30_USB_AUTHENTICATING: return L"프로토콜 연결됨 · 인증서 확인 중";
+    case I30_USB_AUTH_REQUIRED: return aare ? L"수신기 인증서를 설정한 뒤 다시 연결해 주세요." :
+                                             L"휴대폰 연결됨 · 헤드유닛 인증 설정 필요";
+    case I30_USB_APPROVAL: return aare ? L"AARE에서 수신기 지문을 확인하고 USB를 다시 연결하세요." :
+                                         L"휴대폰이 수신기 인증서를 거부했습니다.";
+    case I30_USB_AUTH_FAILED: return L"인증 실패 · 인증서 등록과 USB 연결을 확인하세요.";
+    case I30_USB_MEDIA: return L"인증 완료 · 영상 연결 준비 중";
+    case I30_USB_MEDIA_FAILED: return L"영상 연결 실패 · USB를 다시 연결해 주세요.";
+    case I30_USB_VERSION_FAILED: return L"프로토콜 연결 실패 · 앱 선택과 USB 권한을 확인하세요.";
+    case I30_USB_RECONNECT: return L"연결이 해제됐습니다. USB를 다시 연결해 주세요.";
     case I30_USB_UNAVAILABLE: return L"USB 대기를 시작할 수 없습니다.";
     default: return L"휴대폰 USB 연결 준비 중";
     }
@@ -143,6 +185,29 @@ int draw_text(CE_HANDLE dc, CE_HANDLE font, const CE_WCHAR *text, CeRect rect)
     if (previous)
         SelectObject(dc, previous);
     return height;
+}
+
+void paint_button(CE_HANDLE dc, CE_HANDLE font, const CE_WCHAR *label, const CeRect &rect)
+{
+    FillRect(dc, &rect, GetStockObject(dark_gray_brush));
+    draw_text(dc, font, label, rect);
+}
+
+void paint_guide(CE_HANDLE dc, const Projection *state)
+{
+    const auto &page = guide[state->guide_page - 1];
+    draw_text(dc, state->heading, page.title, {72, 35, 728, 100});
+    draw_text(dc, state->body, page.number, {665, 48, 765, 88});
+    int y = 120;
+    for (const auto *line : page.lines) {
+        draw_text(dc, state->body, line, {24, y, 776, y + 40});
+        y += 46;
+    }
+    if (state->guide_page > 1)
+        paint_button(dc, state->body, L"이전", previous_button);
+    if (state->guide_page < guide_pages)
+        paint_button(dc, state->body, L"다음", next_button);
+    paint_button(dc, state->body, L"닫기", close_button);
 }
 
 bool video_active(const Projection *state)
@@ -231,10 +296,20 @@ void paint_status(CE_HANDLE window, Projection *state)
         FillRect(dc, &screen, GetStockObject(black_brush));
         SetBkMode(dc, 1); // TRANSPARENT
         SetTextColor(dc, 0x00ffffff);
-        draw_text(dc, state->heading, L"Android Auto", {30, 130, 770, 198});
-        int painted = draw_text(dc, state->body, status_text(state->displayed), {30, 207, 770, 269});
-        FillRect(dc, &map_button, GetStockObject(dark_gray_brush));
-        draw_text(dc, state->body, L"지도 돌아가기", map_button);
+        int painted = 0;
+        if (state->guide_page) {
+            paint_guide(dc, state);
+        } else if (state->aare) {
+            draw_text(dc, state->heading, L"Android Auto", {24, 65, 776, 124});
+            draw_text(dc, state->body, L"휴대폰에서 AARE를 실행한 후 USB 케이블을 연결하세요.", {24, 150, 776, 200});
+            painted = draw_text(dc, state->body, status_text(state->displayed, true), {24, 235, 776, 294});
+            paint_button(dc, state->body, L"취소", cancel_button);
+            paint_button(dc, state->body, L"사용법 보기", help_button);
+        } else {
+            draw_text(dc, state->heading, L"Android Auto", {30, 130, 770, 198});
+            painted = draw_text(dc, state->body, status_text(state->displayed, false), {30, 207, 770, 269});
+            paint_button(dc, state->body, L"지도 돌아가기", map_button);
+        }
         if (painted && state->painted != state->displayed) {
             state->painted = state->displayed;
             if (state->painted == I30_USB_WAITING)
@@ -246,11 +321,29 @@ void paint_status(CE_HANDLE window, Projection *state)
     ReleaseDC(window, dc);
 }
 
-bool inside_map_button(int32_t point)
+bool inside(const CeRect &rect, int32_t point)
 {
     auto x = static_cast<int16_t>(point);
     auto y = static_cast<int16_t>(static_cast<uint32_t>(point) >> 16);
-    return x >= map_button.left && x < map_button.right && y >= map_button.top && y < map_button.bottom;
+    return x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom;
+}
+
+Button button_at(const Projection *state, int32_t point)
+{
+    if (state->guide_page) {
+        if (state->guide_page > 1 && inside(previous_button, point))
+            return Button::Previous;
+        if (state->guide_page < guide_pages && inside(next_button, point))
+            return Button::Next;
+        if (inside(close_button, point))
+            return Button::Close;
+    } else {
+        if (inside(state->aare ? cancel_button : map_button, point))
+            return Button::Cancel;
+        if (state->aare && inside(help_button, point))
+            return Button::Help;
+    }
+    return Button::None;
 }
 
 bool panel_origin(CE_HANDLE map, CePoint &origin)
@@ -303,6 +396,7 @@ void refresh(CE_HANDLE window, Projection *state)
         return;
     }
     if (!i30_stock_display_safe()) {
+        state->pressed = Button::None;
         reset_touch(state);
         hide(window);
         return;
@@ -331,6 +425,10 @@ void refresh(CE_HANDLE window, Projection *state)
         }
     }
     int32_t status = InterlockedCompareExchange(&state->status, 0, 0);
+    if (video_active(state)) {
+        state->guide_page = 0;
+        state->pressed = Button::None;
+    }
     if (showing || status != state->displayed) {
         state->displayed = status;
         InvalidateRect(window, nullptr, 0);
@@ -340,18 +438,30 @@ void refresh(CE_HANDLE window, Projection *state)
 void handle_touch(CE_HANDLE window, Projection *state, uint32_t message, int32_t detail)
 {
     if (video_active(state)) {
-        state->back_pressed = false;
+        state->pressed = Button::None;
         if (state->touch_enabled && touch_visible(window, state))
             queue_touch(state, message, detail);
         else
             reset_touch(state);
     } else if (message == wm_lbuttondown) {
-        state->back_pressed = inside_map_button(detail);
+        state->pressed = button_at(state, detail);
     } else if (message == wm_lbuttonup) {
-        bool go_back = state->back_pressed && inside_map_button(detail);
-        state->back_pressed = false;
-        if (go_back)
+        Button button = state->pressed;
+        state->pressed = Button::None;
+        if (button == Button::None || button != button_at(state, detail))
+            return;
+        if (button == Button::Cancel) {
             close_projection(window, state);
+            return;
+        }
+        switch (button) {
+        case Button::Help: state->guide_page = 1; break;
+        case Button::Previous: --state->guide_page; break;
+        case Button::Next: ++state->guide_page; break;
+        case Button::Close: state->guide_page = 0; break;
+        default: return;
+        }
+        InvalidateRect(window, nullptr, 0);
     }
 }
 
@@ -361,8 +471,10 @@ int32_t window_proc(CE_HANDLE window, uint32_t message, uint32_t param, int32_t 
     if (state) {
         if (message == I30_TOUCH_MESSAGE)
             return read_touch(window, state, param);
-        if (message == wm_cancelmode || message == wm_capturechanged)
+        if (message == wm_cancelmode || message == wm_capturechanged) {
+            state->pressed = Button::None;
             reset_touch(state);
+        }
         if (message == wm_paint) {
             ValidateRect(window, nullptr);
             paint_status(window, state);
@@ -418,6 +530,7 @@ extern "C" int I30RouteProjectionTouch(CE_HANDLE source, uint32_t message, int32
             return 0;
         CE_HANDLE hit = WindowFromPoint(point);
         if ((hit != window && hit != source && hit != state->map) || !ScreenToClient(window, &point)) {
+            state->pressed = Button::None;
             reset_touch(state);
             return 0;
         }
@@ -466,6 +579,7 @@ extern "C" int I30ToggleProjection(CE_HANDLE menu)
         return 0;
     *state = {};
     state->map = map;
+    state->aare = i30_usb_file_exists(I30_AA_AARE_MODE);
     state->cancel = CreateEventW(nullptr, 1, 0, nullptr);
     state->references = 1;
     state->status = state->displayed = I30_USB_STARTING;

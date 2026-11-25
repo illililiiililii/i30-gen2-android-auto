@@ -62,14 +62,16 @@ static int register_clients(unsigned *installed)
     return 1;
 }
 
-enum { PROJECTION_CANCEL, PROJECTION_SWITCH, PROJECTION_VERSION, PROJECTION_AUTH,
+enum { PROJECTION_CANCEL, PROJECTION_SWITCH, PROJECTION_VERSION, PROJECTION_MEDIA,
+       PROJECTION_AUTH, PROJECTION_APPROVAL, PROJECTION_AUTH_FAILED, PROJECTION_MEDIA_FAILED,
        PROJECTION_FAILURE, PROJECTION_READY, PROJECTION_SIGNAL_COUNT };
 
 static void wait_for_projection(const CE_HANDLE *events, I30UsbStatus report, void *context)
 {
     static const enum I30UsbProjectionStatus states[] = {
-        I30_USB_UNAVAILABLE, I30_USB_CONNECTING, I30_USB_AUTHENTICATING,
-        I30_USB_AUTH_REQUIRED, I30_USB_RECONNECT, I30_USB_RECONNECT
+        I30_USB_UNAVAILABLE, I30_USB_CONNECTING, I30_USB_AUTHENTICATING, I30_USB_MEDIA,
+        I30_USB_AUTH_REQUIRED, I30_USB_APPROVAL, I30_USB_AUTH_FAILED, I30_USB_MEDIA_FAILED,
+        I30_USB_VERSION_FAILED, I30_USB_RECONNECT
     };
     enum I30UsbProjectionStatus status = I30_USB_WAITING;
     report(context, status);
@@ -81,8 +83,9 @@ static void wait_for_projection(const CE_HANDLE *events, I30UsbStatus report, vo
             report(context, I30_USB_UNAVAILABLE);
             return;
         }
-        /* READY also follows a successful version exchange without credentials. */
-        if (result == PROJECTION_READY && status == I30_USB_AUTH_REQUIRED)
+        /* The legacy USB test reports READY after any successful version exchange. */
+        if (result == PROJECTION_READY && (status == I30_USB_AUTH_REQUIRED || status == I30_USB_APPROVAL ||
+            status == I30_USB_AUTH_FAILED || status == I30_USB_MEDIA_FAILED))
             continue;
         status = states[result];
         report(context, status);
@@ -92,7 +95,11 @@ static void wait_for_projection(const CE_HANDLE *events, I30UsbStatus report, vo
 static const CE_WCHAR *listen(enum I30UsbListenMode mode, CE_HANDLE cancel,
                              I30UsbStatus report, void *context)
 {
-    CE_HANDLE gate, switching, signals[3], version = 0, auth = 0;
+    static const CE_WCHAR *const phase_names[] = {I30_AA_VERSION, I30_AA_MEDIA, I30_AA_AUTH_REQUIRED,
+        I30_AA_APPROVAL, I30_AA_AUTH_FAILED, I30_AA_MEDIA_FAILED};
+    CE_HANDLE gate, switching, signals[3];
+    CE_HANDLE events[PROJECTION_SIGNAL_COUNT];
+    unsigned opened = 0;
     const CE_WCHAR *message = L"Could not create the USB test session.";
     const int automatic = mode == I30_USB_AUTOSTART;
     const uint32_t wait_ms = automatic ? 1000 : 35000;
@@ -106,15 +113,22 @@ static const CE_WCHAR *listen(enum I30UsbListenMode mode, CE_HANDLE cancel,
     signals[1] = new_event(I30_AA_FAILURE);
     signals[2] = cancel;
     if (report) {
-        version = new_event(I30_AA_VERSION);
-        auth = new_event(I30_AA_AUTH_REQUIRED);
+        events[PROJECTION_CANCEL] = cancel;
+        events[PROJECTION_SWITCH] = switching;
+        events[PROJECTION_FAILURE] = signals[1];
+        events[PROJECTION_READY] = signals[0];
+        for (; opened < sizeof(phase_names) / sizeof(phase_names[0]); ++opened) {
+            events[PROJECTION_VERSION + opened] = new_event(phase_names[opened]);
+            if (!events[PROJECTION_VERSION + opened])
+                break;
+        }
     }
-    if (switching && signals[0] && signals[1] && (!report || (cancel && version && auth))) {
+    if (switching && signals[0] && signals[1] &&
+        (!report || (cancel && opened == sizeof(phase_names) / sizeof(phase_names[0])))) {
         message = L"Could not register the USB test driver.";
         if (register_clients(&installed)) {
             OutputDebugStringW(L"i30 USB attach ready. Connect Samsung phone.\r\n");
             if (report) {
-                const CE_HANDLE events[] = {cancel, switching, version, auth, signals[1], signals[0]};
                 wait_for_projection(events, report, context);
                 message = L"Android Auto projection listener stopped.";
             } else do {
@@ -153,10 +167,8 @@ static const CE_WCHAR *listen(enum I30UsbListenMode mode, CE_HANDLE cancel,
         clean = (RegDeleteKeyW(HKLM, client_keys[--installed]) == 0) && clean;
     if (!clean)
         message = L"USB test ended, but the temporary driver registration could not be removed.";
-    if (auth)
-        CloseHandle(auth);
-    if (version)
-        CloseHandle(version);
+    while (opened)
+        CloseHandle(events[PROJECTION_VERSION + --opened]);
     if (signals[1])
         CloseHandle(signals[1]);
     if (signals[0])

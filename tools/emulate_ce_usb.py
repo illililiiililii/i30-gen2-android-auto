@@ -159,7 +159,8 @@ class UsbClient(Machine):
     def CreateEventW(self, attrs, manual, initial, name, *_):
         assert not attrs and manual == 1 and not initial
         label = self.text(name).split('.')[-1]
-        if label in ('Version', 'AuthRequired', 'VideoActive') and label not in self.events.values():
+        if label in ('Version', 'AuthRequired', 'Approval', 'AuthFailed', 'Media', 'MediaFailed',
+                     'VideoActive') and label not in self.events.values():
             self.event_error = 0  # The standalone driver fixture has no navigation listener.
             return 1
         self.event_error = 0 if label == 'Gate' and self.case == 'not-armed' else 183
@@ -183,6 +184,10 @@ class UsbClient(Machine):
     def CreateFileW(self, *_):
         self.event_error = 2
         return -1  # No TLS identity is enrolled in the baseline USB tests.
+
+    def GetFileAttributesW(self, path, *_):
+        assert self.text(path) == r'\DiskA\Application\NAVI\i30-aare.opt'
+        return 0x80 if 'i30-aare.opt' in getattr(self, 'files', {}) else 0xffffffff
 
     def OutputDebugStringW(self, message, *_):
         self.debug.append(self.text(message).strip())
@@ -614,6 +619,8 @@ class NativeUsbStress(TlsUsbClient):
         return super().EventModify(handle, operation)
 
     def WaitForSingleObject(self, handle, milliseconds, *_):
+        if handle == 9:
+            return 0 if self.video_active else 258
         if handle in (21, 22):
             return 0 if handle == 21 or self.camera_active else 258
         return super().WaitForSingleObject(handle, milliseconds)
@@ -849,7 +856,7 @@ def test_tls(path, openssl, exercise_projection=False):
     missing = UsbClient(path, 'version')
     missing.events.update({7: 'Version', 8: 'AuthRequired'})
     result = missing.attach()
-    missing_status = ['Version', 'AuthRequired', 'Ready']
+    missing_status = ['Switch', 'Version', 'AuthRequired', 'Ready']
     assert result['accepted'] and result['signals'] == missing_status, result
 
     with test_identity(openssl) as (cert, key, context):
@@ -1006,6 +1013,17 @@ def test_tls(path, openssl, exercise_projection=False):
             assert result['debug'][-1] == 'i30 CE TLS head unit certificate and RSA key do not match.', result
             report['key_mismatch'] = result['debug'][-1]
         report['fingerprint'] = 'matching chain and pin accepted; mismatched pin or CA rejected'
+        aare_files = dict(files, **{'i30-aare.opt': b'1\n', 'i30-aare-ca.der': cert_der,
+                                  'i30-aare-client.der': cert_der, 'i30-aare-client-key.der': key_der,
+                                  'i30-aare-peer-sha256.txt': pin_files['i30-peer-sha256.txt']})
+        aare = TlsUsbClient(path, aare_files, context)
+        result = aare.attach()
+        assert aare.authenticated and aare.closed_gracefully, result
+        del aare_files['i30-aare-peer-sha256.txt']
+        aare = TlsUsbClient(path, aare_files, context)
+        result = aare.attach()
+        assert not aare.authenticated and 'i30 CE TLS ClientHello sent.' not in result['debug'], result
+        report['aare_profile'] = 'AARE enrollment succeeds; missing AARE pin never falls back to legacy credentials'
         if exercise_projection:
             import av
             codec = av.CodecContext.create('libx264', 'w')
@@ -1597,7 +1615,7 @@ def main():
               for case in ('switch', 'version', 'not-armed', 'storage', 'unsupported', 'wrong-interface',
                            'second-pipe-fails', 'timeout', 'version-disconnect')}
     assert client['switch']['accepted'] and client['switch']['controls'] == [51, 52, 52, 52, 52, 53]
-    assert client['version']['accepted'] and client['version']['signals'] == ['Ready']
+    assert client['version']['accepted'] and client['version']['signals'] == ['Switch', 'Ready']
     assert client['version']['inputs'] == ['00030006000100010006']
     assert all(not result['accepted'] for name, result in client.items() if name not in ('switch', 'version'))
     assert client['timeout']['wait_ms'] == 3000 and client['timeout']['closed_transfers'] == 1

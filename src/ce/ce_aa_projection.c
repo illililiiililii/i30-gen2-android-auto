@@ -352,6 +352,7 @@ static int paint_packet(const I30SecureChannel *wire, Projection *video, unsigne
         return 0;
     if (rendered && !video->rendered) {
         video->rendered = 1;
+        wire->presented(wire->context);
         OutputDebugStringW(L"i30 CE projection frame presented.\r\n");
     }
     while (session >= 128U) {

@@ -284,13 +284,19 @@ static int read_link(void *opaque, uint8_t *data, unsigned capacity)
 static void start_video(void *opaque)
 {
     UsbLink *link = opaque;
+    signal_status(I30_AA_MEDIA);
     link->video = session_event(I30_AA_VIDEO_ACTIVE);
-    if (link->video)
-        SetEvent(link->video);
     link->resident = link->video != 0;
     /* The resident projection gets an idle deadline. Manual tests remain bounded. */
     link->start = GetTickCount();
     link->timeout = USB_VIDEO_MS;
+}
+
+static void video_presented(void *opaque)
+{
+    UsbLink *link = opaque;
+    if (link->video)
+        SetEvent(link->video);
 }
 
 static void poll_read(void *opaque, I30ReadPoll poll, void *context)
@@ -362,8 +368,16 @@ static int negotiate(UsbLink *link, CE_HANDLE device, const UsbInterface *interf
                 link->video = 0;
                 wire.write = write_tls;
                 wire.poll_read = poll_read;
-                if (i30_ce_authenticate(&wire, start_video))
+                enum I30AuthResult result = i30_ce_authenticate(&wire, start_video, video_presented);
+                if (result == I30_AUTH_CONFIG)
                     signal_status(I30_AA_AUTH_REQUIRED);
+                else if (result == I30_AUTH_PHONE_REFUSED)
+                    signal_status(I30_AA_APPROVAL);
+                else if (result == I30_AUTH_FAILED)
+                    signal_status(I30_AA_AUTH_FAILED);
+                else if (result == I30_AUTH_MEDIA_FAILED ||
+                         (link->video && running(link->video)))
+                    signal_status(I30_AA_MEDIA_FAILED);
                 if (link->video) {
                     EventModify(link->video, 2U); /* EVENT_RESET */
                     CloseHandle(link->video);
@@ -432,6 +446,7 @@ int USBDeviceAttach(CE_HANDLE device, const UsbFunctions *api, const UsbInterfac
     } else if (running(link.stop) && vendor == I30_GOOGLE &&
                (product == I30_AOA_DATA || product == I30_AOA_ADB_DATA) &&
                interface && interface->descriptor[2] == 0U) {
+        signal_status(I30_AA_SWITCH);
         success = negotiate(&link, device, interface);
         signal_status(success ? I30_AA_READY : I30_AA_FAILURE);
     }

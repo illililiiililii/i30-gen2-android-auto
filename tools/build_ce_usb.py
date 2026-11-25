@@ -21,7 +21,7 @@ from inspect_firmware import ROOT
 DRIVER_API = ('CreateEventW', 'GetLastError', 'EventModify', 'CloseHandle', 'WaitForSingleObject', 'GetTickCount', 'Sleep',
               'OutputDebugStringW')
 TLS_API = ('CreateFileW', 'ReadFile', 'LocalAlloc', 'LocalFree',
-           'CeGenRandom', 'GetSystemTimeAsFileTime')
+           'CeGenRandom', 'GetSystemTimeAsFileTime', 'GetFileAttributesW')
 VIDEO_API = ('FindWindowW', 'GetForegroundWindow', 'GetDC', 'ReleaseDC', 'StretchDIBits',
              'GetProcessHeap', 'HeapAlloc', 'HeapFree', 'GetDCEx', 'GetClipBox',
              'GetWindow', 'IsWindowVisible', 'GetWindowLongW', 'GetClientRect', 'SendMessageTimeout')
