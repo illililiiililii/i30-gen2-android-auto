@@ -1,5 +1,7 @@
 # Codex 세션 인계
 
+11월 25일 인증 이후 통합에서는 순정 투사 터치와 영상·USB 안정성, 가상 MICOM 후진, WinCE Wave 포맷 질의를 검증했다. 결과와 남은 실기기 범위는 새 인계를 참조한다. [인증 이후 통합 인계](Codex-post-auth-integration/FINAL_HANDOFF.md)
+
 11월 25일 인증서 교차 검증, ARM 인증 진단과 실폰의 외부 의존 조건은 인증 해결 보고서를 참조한다. [인증 해결 보고서](Codex-authentication-resolution/FINAL_HANDOFF.md)
 
 작업 폴더는 `F:\i30-gen2-android-auto`다. 목표는 순정 내비 한 창에서 **내비 메뉴 → Android Auto**로 실폰 800×480 영상을 띄우고, 후방카메라·시스템 팝업·순정 OSD에 표시 우선권을 넘기는 것이다. 에뮬레이터에서 가상 영상과 실폰 인증 대기까지 확인했다. 실폰 화면은 WinCE에서 아직 나오지 않는다. [검증 및 오류 07 분석](ANDROID_AUTO_AUTH_STATUS.md)
