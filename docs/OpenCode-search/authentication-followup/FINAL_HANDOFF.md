@@ -1,5 +1,7 @@
 # FINAL HANDOFF — Authentication Follow-up (2026-11-25)
 
+후속 Codex 검증에서 공개 인증서의 시간 파싱 실패는 재현됐다. 과거 물리 USB에서 자체 시험 신원을 사용한 곳은 별도 PC 진단이었다. WinCE의 파싱 실패는 구성 종료로 이어진다. 실폰 신원 발급과 수락은 별도 확인이 필요하다. [교차 검증과 정정 근거](../../Codex-authentication-resolution/RESEARCH_VALIDATION.md)
+
 대상: GD13MY (Hyundai i30 GD 2013, Windows CE 6.0, ARM Cortex-A8, BearSSL 0.6)
 범위: 헤드유닛 인증서 · TLS 상호 인증 · GAL 신뢰 체인 · 신원 확보
 제외: 영상, DSP, 오디오, UI

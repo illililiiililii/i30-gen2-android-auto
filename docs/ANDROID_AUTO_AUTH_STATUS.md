@@ -1,5 +1,7 @@
 # Android Auto 구현 및 인증 상태
 
+11월 25일 교차 검증에서는 공개 인증서의 오프셋 시간 오류와 과거 실폰의 시험 신원 거부를 별개로 확인했다. WinCE 로더의 구성 오류는 TLS 송신 전에 종료된다. 새 진단은 실제 전송한 리프 지문을 UART에 기록한다. 순정 전체 부팅은 가상폰 `AUTH_COMPLETE`, 800×480 영상과 USB 재연결을 통과했다. 새 ARM 빌드의 실폰 시험은 보류 상태다. [인증 해결 인계](Codex-authentication-resolution/FINAL_HANDOFF.md)
+
 2026년 11월 23일 · GD13MY.KOR.SOP.00.061 · Windows CE 6.0 ARM
 
 [11월 24일 XDA·펌웨어 분석과 수신기 재검증](ANDROID_AUTO_REVERSE_ENGINEERING.md)
