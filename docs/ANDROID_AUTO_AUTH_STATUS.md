@@ -1,6 +1,6 @@
 # Android Auto 구현 및 인증 상태
 
-11월 25일 교차 검증에서는 공개 인증서의 오프셋 시간 오류와 과거 실폰의 시험 신원 거부를 별개로 확인했다. WinCE 로더의 구성 오류는 TLS 송신 전에 종료된다. 새 진단은 실제 전송한 리프 지문을 UART에 기록한다. 순정 전체 부팅은 가상폰 `AUTH_COMPLETE`, 800×480 영상과 USB 재연결을 통과했다. 새 ARM 빌드의 실폰 시험은 보류 상태다. [인증 해결 인계](Codex-authentication-resolution/FINAL_HANDOFF.md)
+11월 25일 최신 WinCE ARM 빌드의 실폰 시험에서 AOA, AAP 1.7, TLS 1.2, 헤드유닛 Certificate 및 CertificateVerify 송신을 확인했다. WinCE 로딩·송신 리프 지문은 일치했고, 폰 Conscrypt가 시험 신원의 신뢰 앵커를 찾지 못했다. 상호 TLS Finished와 `AUTH_COMPLETE`에는 도달하지 못했다. 공개 인증서의 오프셋 시간 오류는 독립적인 로컬 파싱 결과다. WinCE의 구성 오류는 TLS 송신 전에 종료된다. [최신 실폰 증거](Codex-authentication-resolution/REAL_PHONE_TEST_RESULTS.md#11월-25일-후속-실폰-시험) · [외부 연구 교차 검증](Codex-authentication-resolution/RESEARCH_VALIDATION.md)
 
 2026년 11월 23일 · GD13MY.KOR.SOP.00.061 · Windows CE 6.0 ARM
 
@@ -49,20 +49,24 @@ AOA의 51·52·53 제어 전송과 액세서리 재열거 이후 bulk에서 AA �
 
 ## 적용 경로
 
+실폰의 TLS 1.2 `CertificateRequest`에 있는 유일한 발급기관 이름은 보관 중인 Google Automotive Link 루트의 subject와 DER 바이트까지 일치했다. 같은 요청에 RSA 인증서와 RSA PKCS#1/SHA-256이 포함됐다. 남은 조건은 이 시험에서 사용해도 된다는 명시적 허가, 폰이 신뢰하는 RSA 리프와 중간 체인, 그리고 리프에 대응하는 서명 키다. [실폰 발급기관 확인](Codex-authentication-resolution/REAL_PHONE_TEST_RESULTS.md#폰이-요청하는-발급기관과-서명)
+
 - **A · 기존 구현 활용.** AASDK/OpenAuto의 초기화 순서와 프레이밍을 현재 수신기에 대조했다. 공개 프로젝트에 들어 있는 서드파티 신원은 발급 및 사용 권한을 확인할 자료가 없었다. 기존 CE BearSSL과 PC OpenSSL을 사용한다.
-- **B · 평가 SDK.** Google은 앱 시험용 DHU를 제공한다. 이 공개 문서에서 별도로 쓸 수 있는 개인용 헤드유닛 신원 발급 경로는 확인되지 않았다. Cinemo는 Android Auto USB를 포함한 CORE Projection SDK를 안내한다. 기존 WinCE ARM 평가 문의의 발송을 확인했으며 2026-11-23 기준 답변, CE 6.0 지원, 평가용 신원 제공 여부는 미확인이다. P3는 Android Auto Projection 인증 파트너다. [Google DHU](https://developer.android.com/training/cars/testing/dhu) · [Cinemo CORE Projection](https://automotive.cinemo.com/products-and-services/cinemo-core/core-projection/) · [P3 인증 안내](https://p3-group.com/Insights/google-expands-p3s-3pl-accreditation-to-embrace-next-gen-android-autoprojection-aap-technology-certification/)
+- **B · 평가 SDK.** Google은 앱 시험용 DHU에 USB AOA와 ADB 터널을 제공한다. 공개 옵션에서 독립 수신기에 시험 신원을 발급하거나 등록하는 절차를 찾지 못했다. Cinemo의 CORE Projection SDK는 Android Auto USB를 안내한다. 11월 23일 문의에 대한 답변은 11월 25일 관련 메일 검색에서 확인되지 않았으며, CE 6.0 ARM 및 독립 구현 평가에 대한 사용 범위를 확인해야 한다. [Google DHU](https://developer.android.com/training/cars/testing/dhu) · [Cinemo CORE Projection](https://automotive.cinemo.com/products-and-services/cinemo-core/core-projection/)
 - **C · 자체 테스트.** 모의 폰과 별도로 생성한 시험 CA와 인증서로 전송·상호 TLS·서비스·영상 경로를 검증한다. 실폰 쪽 신뢰 결정은 실제 폰 로그로 판정한다. [격리 시험 실행기](../tools/verify_gd13my_virtual_phone.py) · [순정 메뉴 통합](CE_NATIVE_DISPLAY_INTEGRATION.md)
 - **D · 지원 차량 비교.** 국내 G80 고급형 2세대 `DHBS.P2ALC.KR`의 공식 SW 버전은 `DHPE.KOR.SOP.00.057`이다. 미국형 G80 DIS의 USB 투사와 미국형 Elantra GT (GD)의 Android Auto 업데이트는 공개 자료에서 확인된다. 준비된 로컬 G80 폴더에는 PC용 Navigation Updater만 있다. 비교 대상 차량 이미지가 확보되면 USB·TLS·세션 모듈의 호출 구조와 저장 구조를 검증할 수 있다. [제네시스 국내 SW 목록](https://update.genesis.com/KR/KO/updateNoticeView/software-version) · [미국형 G80 안내](https://owners.genesis.com/genesis/us/mygenesis/manuals/glovebox-manual/2018/G80/8056_2_T1_G80_GettingStartedGuide_R10.pdf) · [현대 미국 GD 서비스 문서](https://static.nhtsa.gov/odi/tsbs/2016/SB-10081532-0699.pdf) · [기존 대조 조사](PHASE7_8_RESULTS.md)
+- **E · 공인 사전 검증.** P3와 CIeNET은 Google의 Android Auto Projection 3PL 인증 업무를 공식 발표했다. 공개 자료는 차량 제조사·공급사와 투사 시스템 제공 업체의 제품 인증을 다룬다. 독립 연구자의 사전 시험 자격, 프로젝트 RSA 키의 CSR 수락, 순정폰에서 쓸 수 있는 평가 체인의 발급과 사용 범위는 공개 자료에서 확인되지 않았다. [Google 파트너 안내](https://developers.google.com/cars) · [P3 인증 업무](https://p3-group.com/Insights/google-expands-p3s-3pl-accreditation-to-embrace-next-gen-android-autoprojection-aap-technology-certification/) · [CIeNET 인증 업무](https://cienet.com/news-insights/cienet-android-auto-projection-3pl-certification.html)
 
 ## 실폰 재시험
 
 두 방향의 신뢰 자료를 준비한다. 헤드유닛에는 평가용으로 발급되고 테스트폰이 신뢰하는 클라이언트 인증서 체인과 대응 RSA 키, 수신기가 폰을 검증할 공개 CA와 예상 이름 또는 등록된 SHA-256 지문이 필요하다. WinCE 실험 프로필의 경로는 `\DiskA\Application\NAVI\`이며 기존 `i30-client.pem`(leaf, 중간 CA 순), `i30-client-key.pem`, `i30-ca.pem`, `i30-peer.txt` 또는 `i30-peer-sha256.txt`를 읽는다. 인증 자료가 없는 기본 이미지로는 버전과 인증 설정 안내까지 확인할 수 있다. 실험은 별도 에뮬레이터 이미지에서 실행한다. [CE 설정 경로](../src/ce/ce_aa_tls.c) · [PC TLS 등록 옵션](USB_CONNECTION_TEST.md)
 
-1. 같은 폰과 데이터 케이블로 공식 DHU를 실행해 화면을 확인한다. 종료 후 케이블을 분리해서 폰을 기본 USB 모드로 되돌린다.
-2. 에뮬레이터에서 아래 명령으로 새 이미지를 연다. 기본 WinUSB 경로에 접근 가능한 포트를 사용한다. 내비 메뉴에서 **Android Auto**를 누르고 케이블을 다시 연결한다.
+1. 평가 자료의 사용 범위가 현재 GD13MY 구현과 정지된 벤치 시험을 포함하는지 확인한다. 로컬에서 발급 체인·RSA 키 일치·유효기간을 확인하고, 폰 지문 파일의 FAT 8.3 별칭이 `I30-PEER.TXT`와 겹치지 않는지 확인한다. 기존 공식 DHU 성공을 대조군으로 쓸 수 있다. [실폰 기록](Codex-authentication-resolution/REAL_PHONE_TEST_RESULTS.md#11월-25일-후속-실폰-시험)
+2. 현재 `tested-image/gd13my-native.img`의 시험용 사본에 위 자료를 등록한 뒤 해당 사본과 WinUSB 포트로 에뮬레이터를 연다. 내비 메뉴에서 **Android Auto**를 누르고 케이블을 다시 연결한다. Windows USB 접근이 거부되면 ADB 서버를 잠시 정지하고 시험 뒤 복구한다.
 
    ```powershell
-   .\tools\run_gd13my_phase78.ps1 -StockProjectionImage .\build\gd13my-aa-error07\gd13my-aa-error07.img -UsbPort 1-2
+   $approvedImage = '.\build\codex-post-auth-integration\approved-ce.img'
+   .\tools\run_gd13my_phase78.ps1 -StockProjectionImage $approvedImage -UsbPort 1-1
    ```
 
-3. Android Auto 버전, 07 화면의 재현 여부와 시각, `build/gd13my-boot`의 해당 UART·USB 로그를 기록한다. 평가 자료를 등록한 시험에서는 TLS 완료, `AUTH_COMPLETE`, 암호화된 검색, 실제 800×480 프레임, 화면 조작과 연결 해제를 순서대로 확인한다. 개인키 파일은 시험 보고에 필요하지 않다.
+3. AAP 버전과 실제 송신 리프 지문을 확인하고 상호 TLS Finished, `AUTH_COMPLETE`, 암호화된 검색, 800×480 실시간 프레임, 화면 조작과 연결 해제를 순서대로 확인한다. 같은 자체 서명 신원에서 발생하는 07은 최신 실폰 증거를 사용한다.

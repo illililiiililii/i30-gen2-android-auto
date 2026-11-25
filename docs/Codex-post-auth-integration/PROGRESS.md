@@ -3,7 +3,7 @@
 ## 2026-11-25 · 세션 복구
 
 - 로컬 `main`의 터치·USB 통합 `8afc73f`와 두 연구 자료 병합을 복원했다. 원격 `main`의 마지막 조회는 `adee6ca`였다. 초기화나 파일 삭제 없이 소스와 미커밋 시험 도구·문서를 이어서 작업한다.
-- 중단된 순정 시험은 `stock-integration/`에 첫 프레임과 터치 응답 프레임, 가상폰 수신 이벤트 30건 이상을 남겼다. 종료 JSON과 후진·분리 단계 기록은 없으며 이전 프로세스도 남아 있지 않았다. 같은 시험 이미지를 `resumed-stock/`으로 다시 실행해 기존 증거를 보존했다.
+- 중단된 순정 시험은 `stock-integration/`에 첫 프레임과 터치 응답 프레임, 가상폰 수신 이벤트 27건을 남겼다. 종료 JSON과 후진·분리 단계 기록은 없으며 이전 프로세스도 남아 있지 않았다. 같은 시험 이미지를 `resumed-stock/`으로 다시 실행해 기존 증거를 보존했다.
 - ARM 30분 시험은 종료 JSON까지 남겼다. 한 세션에서 27,000프레임 송신·ACK·표시, 종료 후 추적 할당 0건이었다. 별도 최신 ARM 빌드는 5분 및 5/10/30회 재연결을 통과했다. [회귀 결과](REGRESSION_TEST_RESULTS.md)
 - Web-ChatGPT 자료의 새 제안 중 Wave 장치 열거·포맷 조회를 순정 격리 환경에서 검증했다. 실폰과 승인된 시험 신원이 필요한 검증을 보류하고, 영상 파라미터 집합·순정 화면 및 USB 시험을 이어간다. [OEM 시험](OEM_AND_HARDWARE.md)
 
@@ -16,3 +16,6 @@
 - REA에서 순정 `VID_IOControl`과 `DSP_IOControl`의 export 및 장치 API import를 대조했다. 기존 `VID1:`과 `DSP1:` 장치 경로를 확인했고 코덱 계약과 동시 점유 정책은 후속 연구에 남겼다. [DSP 근거](OEM_AND_HARDWARE.md#영상-dsp-가능성)
 - 별칭을 분리한 WinCE 시험에서 실폰 TLS 1.2, 헤드유닛 리프 및 CertificateVerify 송신을 확인했다. 폰 Conscrypt가 자체 시험 신원의 신뢰 앵커를 찾지 못했다. 인증 완료 이전에 종료됐고 ADB를 복구했다. 순정 가상폰 실행은 독립적으로 후방과 반복 연결을 계속한다. [실폰 결과](../Codex-authentication-resolution/REAL_PHONE_TEST_RESULTS.md#11월-25일-후속-실폰-시험)
 - ARM 영상 예외 회귀를 확장했다. 잘못된 IDR NAL과 816픽셀 폭을 각각 거부했고, 이후 출력·영상 ACK 및 추적 할당이 모두 0건임을 확인했다. [ARM 회귀](REGRESSION_TEST_RESULTS.md)
+- 재개한 순정 시험의 첫 세션에서 800×480 영상 14개를 ACK했다. 중앙 접촉에 가상폰이 응답해 LCD 색이 변했고, 가상 MICOM 후진 중 입력이 가려졌다. 후진 해제 뒤 같은 TLS 세션으로 포커스가 돌아왔고 분리 후 표시가 해제됐다. 두 번째 USB 세션의 TLS와 `AUTH_COMPLETE`도 도달했다. [순정 시험 체크포인트](../../build/codex-post-auth-integration/resumed-stock/virtual-phone.progress.jsonl)
+- 사용자 우선순위에 따라 실폰의 기존 거부 시험을 반복하지 않았다. USB 재연결 뒤 TLS `CertificateRequest`까지만 읽어 GAL 루트와 일치하는 발급기관 한 개와 RSA PKCS#1/SHA-256을 확인했다. 공식 DHU·SDK·공인 시험기관의 공개 경로를 대조했고, 현재 프로젝트에서 쓸 수 있는 평가 신원은 확보되지 않았다. [실폰 및 발급 조건](../Codex-authentication-resolution/REAL_PHONE_TEST_RESULTS.md#폰이-요청하는-발급기관과-서명)
+- 이미 실행 중이던 순정 회귀를 종료까지 확인했다. 5회 재연결·표시 해제, 30개 영상 ACK, 후진 중 입력 차단과 복귀, 마지막 순정 메뉴가 검증됐다. 첫 세션의 제스처 검사에는 접촉 분할이 남았다. [최종 인계](FINAL_HANDOFF.md)

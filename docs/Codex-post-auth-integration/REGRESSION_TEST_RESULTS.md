@@ -27,7 +27,11 @@
 
 ## 순정 통합 시험
 
-첫 수정 이미지에서 순정 메뉴, TLS, AuthComplete, 서비스 탐색과 45개 연속 영상 응답을 관측했다. 터치 및 후진 전환을 포함한 구간은 게스트 60.895초, 호스트 749.551초, 호스트 CPU 677.094초였다. 카메라에 표시를 넘긴 구간도 영상 응답 수에 포함되어 있다. 후진을 가상 MICOM에 주입한 뒤 상대의 네이티브 영상 포커스 확인까지 가상 90.1 ms였다. 후진 중 시험 터치는 AAP로 전달되지 않았고, 같은 세션에서 투사 포커스와 영상이 복귀했다. 첫 수정 이미지 시험은 USB 분리 시작 직후 벽시계 제한에 도달했다. 반복 연결 시험은 첫 세션의 프레임 수를 줄여 별도로 진행한다. [순정 통합 결과](../../build/codex-post-auth-integration/final-integration/virtual-phone.json) · [순정 UART](../../build/codex-post-auth-integration/final-integration/virtual-phone.serial.log)
+첫 수정 이미지에서 순정 메뉴, TLS, AuthComplete, 서비스 탐색과 45개 연속 영상 응답을 관측했다. 터치 및 후진 전환을 포함한 구간은 게스트 60.895초, 호스트 749.551초, 호스트 CPU 677.094초였다. 카메라에 표시를 넘긴 구간도 영상 응답 수에 포함되어 있다. 후진 주입부터 네이티브 포커스 응답까지 가상 90.1 ms였고, 같은 TLS 세션으로 복귀했다. 이 실행은 USB 분리 시작 직후 벽시계 제한에 도달했다. [첫 순정 결과](../../build/codex-post-auth-integration/final-integration/virtual-phone.json)
+
+재개한 최신 `tested-ce` 순정 실행은 호스트 2,017.659초에 USB 연결·분리를 5회 마쳤다. UART에서 TLS, `AUTH_COMPLETE`, 서비스 탐색과 표시 해제 로그가 각각 5회였다. 각 세션의 첫 LCD 프레임과 터치에 응답한 프레임을 확인했다. 800×480 영상 ACK는 첫 세션 14개와 나머지 각 4개로 총 30개였다. 첫 세션의 게스트 구간은 32.770초, 호스트 517.261초, 호스트 CPU 421.500초였다. 다섯 번째 분리 뒤 **지도 돌아가기**로 투사를 닫고 순정 내비 메뉴를 터치 및 MICOM 경로로 다시 열었다. [최신 순정 실행](../../build/codex-post-auth-integration/resumed-stock/virtual-phone.json) · [UART](../../build/codex-post-auth-integration/resumed-stock/virtual-phone.serial.log) · [복귀 화면](../../build/codex-post-auth-integration/resumed-stock/virtual-phone-restored-stock.png)
+
+후진 주입부터 가상폰의 네이티브 영상 포커스 응답까지 47.089 ms, 그 응답부터 같은 TLS 세션의 투사 포커스 복귀까지 991.272 ms였다. 두 수치는 게스트 시간이며, 카메라 구간에 새 AAP 터치가 전달되지 않았다. 첫 세션의 접촉 분할 때문에 합쳐진 테스트의 종료 코드는 `1`이다. 나머지 4개 세션의 중앙 입력·응답 및 전체 연결·분리 검증은 결과에 남았다. 호스트 사유 메모리 표본은 마지막 프레임 구간 약 602 MB에서 종료 뒤 약 556 MB로 줄었다. 게스트 전체 WinCE 핸들과 메모리는 계측하지 않았다. [순정 단계 원장](../../build/codex-post-auth-integration/resumed-stock/virtual-phone.progress.jsonl) · [호스트 표본](../../build/codex-post-auth-integration/resumed-stock/host-memory.jsonl) · [접촉 분할](TOUCH_INPUT_VALIDATION.md)
 
 ## 재현
 

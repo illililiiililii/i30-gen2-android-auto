@@ -31,3 +31,15 @@ SM-G996N에서 Android 15와 Android Auto 18.0.664294를 확인했다. 최신 �
 | 후속 단계 | TLS Finished, `AUTH_COMPLETE`, 서비스 탐색, 영상 미도달. |
 
 시험은 최신 `i30usb.dll` SHA-256 `6ada19e56b1d262c8a5c5f79867140233d95e75bceea7bf490858870476f3ec1`과 별칭이 분리된 임시 DiskA를 사용했다. UART 시각과 실폰 로그를 대조해 체인 거부를 확인했다. ADB 서버는 검사 뒤 다시 시작했다. 다음 실폰 시도에는 사용 권한이 있고 폰이 신뢰하는 헤드유닛 체인과 대응 키가 필요하다. [WinCE TLS UART](../../build/codex-post-auth-integration/real-phone-wince-pin-alias/native-phone.serial.log) · [USB 원본](../../build/codex-post-auth-integration/real-phone-wince-pin-alias/usb.log) · [폰 인증 오류](../../build/codex-post-auth-integration/real-phone-wince-pin-alias/adb-selected.log)
+
+### 폰이 요청하는 발급기관과 서명
+
+기존 액세서리 세션의 쓰기 타임아웃 후 폰을 다시 연결했다. 새 AOA 장치의 WinUSB 데이터 인터페이스가 열릴 때까지 대기했다. PC 진단은 AAP 1.7과 기술 검증용 TLS 1.2 ClientHello까지만 보냈다. 폰의 `CertificateRequest`와 ServerHelloDone을 받은 뒤 연결을 닫고 ADB를 복구했다. 이 흐름에는 헤드유닛 인증서가 포함되지 않았다.
+
+| TLS 1.2 CertificateRequest 필드 | 실폰에서 확인한 값 |
+| --- | --- |
+| 인증서 유형 | `1` (`rsa_sign`), `64` (`ecdsa_sign`) |
+| 서명 알고리즘 | `0403 0804 0401 0503 0805 0501 0806 0601 0201`. `0401`은 RSA PKCS#1/SHA-256. |
+| 발급기관 이름 | 한 개, `O=Google Automotive Link,L=Mountain View,ST=California,C=US`. 저장한 GAL 루트 인증서의 subject와 DER 바이트가 일치했다. |
+
+위 요청값은 해당 실폰에서 승인된 GAL 계열 RSA 시험 신원을 요청할 구체적인 근거다. 발급 자료의 제공 가능성과 해당 인증서의 최종 검증은 별도로 확인해야 한다. 현재 등록 자료의 사용 허가를 확인하기 전까지 추가 실폰 TLS 완료 시험은 보류한다. [캡처 JSON](../../build/codex-post-auth-integration/real-phone-certificate-request.json) · [메시지 본문 원본](../../build/codex-post-auth-integration/real-phone-certificate-request.bin) · [DER 대조](../../build/codex-post-auth-integration/real-phone-certificate-request-verification.json) · [TLS 1.2 CertificateRequest](https://www.rfc-editor.org/rfc/rfc5246.html#section-7.4.4) · [IANA TLS 식별자](https://www.iana.org/assignments/tls-parameters/)
