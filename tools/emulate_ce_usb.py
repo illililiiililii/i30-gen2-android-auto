@@ -1308,6 +1308,48 @@ def stress_frames(fps, count=8, width=800, motion=False):
     return packets
 
 
+def test_separate_video_config(path, files, peer, access_unit):
+    """Send untimed SPS/PPS before the first timed IDR and again after STOP."""
+    starts = list(re.finditer(rb'\x00\x00(?:\x00)?\x01', access_unit))
+    units = [(access_unit[marker.end()] & 31,
+              access_unit[marker.start():starts[index + 1].start() if index + 1 < len(starts) else len(access_unit)])
+             for index, marker in enumerate(starts)]
+    assert starts and starts[0].start() == 0
+    assert [kind for kind, _ in units if kind in (7, 8)] == [7, 8]
+    assert any(kind == 5 for kind, _ in units)
+    config = b''.join(nal for kind, nal in units if kind in (7, 8))
+    picture = b''.join(nal for kind, nal in units if kind not in (7, 8))
+
+    class SeparateConfig(NativeUsbStress):
+        pending_config = False
+        config_acks = 0
+
+        def send_video(self, _index):
+            assert self.projected == self.config_acks
+            self.pending_config = True
+            self.service_frame(b'\x00\x01' + config, 3, fragment=9,
+                               between=b'\x00\x0b\x08\x7b')
+
+        def video_reply(self, flags, message):
+            if message.startswith(b'\x80\x04'):
+                assert flags == 11 and message[2:] == b'\x08\x23\x10\x01'
+                if self.pending_config:
+                    assert self.projected == self.config_acks
+                    self.pending_config = False
+                    self.config_acks += 1
+                    self.service_frame(struct.pack('>HQ', 0, self.ms * 1000) + picture, 3, fragment=11)
+                    return
+            super().video_reply(flags, message)
+
+    guest = SeparateConfig(path, files, peer, [picture] * 2, restart=True)
+    result = guest.attach()
+    assert guest.authenticated and guest.closed_gracefully and not guest.allocations, result
+    assert guest.config_acks == guest.projected == guest.video_acks == guest.pongs == 2, result
+    return {'config_nals': [7, 8], 'config_ack_count': guest.config_acks,
+            'timed_idr_ack_count': guest.video_acks, 'painted': guest.projected,
+            'interleaved_pongs': guest.pongs, 'live_allocations_after_close': len(guest.allocations)}
+
+
 def test_stress(path, openssl, rounds):
     sys.path.insert(0, str(FORMAT.parents[2] / 'src'))
     from i30_receiver.mock import test_identity
@@ -1355,6 +1397,7 @@ def test_stress(path, openssl, rounds):
         result = restarted.attach()
         assert restarted.closed_gracefully and restarted.projected == restarted.video_acks == 2, result
         assert not restarted.allocations and not restarted.video_active, result
+        separate_config = test_separate_video_config(path, files, peer, one_frame[0])
 
         idle_input = {}
         for mode in ('pending', 'zlp'):
@@ -1382,7 +1425,7 @@ def test_stress(path, openssl, rounds):
         return {'streams': streams, 'resident_virtual_seconds': keepalive.long_checkpoints,
                 'resident_pongs': keepalive.pongs, 'resident_painted_frames': keepalive.projected,
                 'abrupt_cleanup': abrupt, 'video_oversize_rejected': True, 'video_restart_painted_frames': 2,
-                'input_while_phone_idle': idle_input,
+                'input_while_phone_idle': idle_input, 'separate_codec_config': separate_config,
                 'completed_session_checkpoints': milestones,
                 'peak_requested_bytes_across_attaches': sorted(peak), 'live_allocations_after_each_attach': 0}
 
