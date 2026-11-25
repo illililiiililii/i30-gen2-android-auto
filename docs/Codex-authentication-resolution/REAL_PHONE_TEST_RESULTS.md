@@ -43,3 +43,14 @@ SM-G996N에서 Android 15와 Android Auto 18.0.664294를 확인했다. 최신 �
 | 발급기관 이름 | 한 개, `O=Google Automotive Link,L=Mountain View,ST=California,C=US`. 저장한 GAL 루트 인증서의 subject와 DER 바이트가 일치했다. |
 
 위 요청값은 해당 실폰에서 승인된 GAL 계열 RSA 시험 신원을 요청할 구체적인 근거다. 발급 자료의 제공 가능성과 해당 인증서의 최종 검증은 별도로 확인해야 한다. 현재 등록 자료의 사용 허가를 확인하기 전까지 추가 실폰 TLS 완료 시험은 보류한다. [캡처 JSON](../../build/codex-post-auth-integration/real-phone-certificate-request.json) · [메시지 본문 원본](../../build/codex-post-auth-integration/real-phone-certificate-request.bin) · [DER 대조](../../build/codex-post-auth-integration/real-phone-certificate-request-verification.json) · [TLS 1.2 CertificateRequest](https://www.rfc-editor.org/rfc/rfc5246.html#section-7.4.4) · [IANA TLS 식별자](https://www.iana.org/assignments/tls-parameters/)
+
+### 공개 시험 신원 후보 재검토
+
+11월 25일 기존 공개 DER로 BearSSL 0.6 디코더와 OpenSSL `verify -purpose sslclient`를 재확인했다. 키 일치는 기존 연구의 결과와 이미 저장된 공개키만 대조했다. 폰은 ADB에서 연결됨으로 확인했고, 시험 이미지는 검증한 ARM DLL의 매니페스트 지문과 일치했다.
+
+| 후보 | 로컬 기술 검증 | 사용 권한과 실폰 호환성 증거 |
+| --- | --- | --- |
+| AASDK/OpenAuto JVC Kenwood | 기존 대응 공개 SPKI가 리프 SPKI와 일치. 유효기간 표시는 2014-07-04~2045-04-29 UTC. GAL 서명 관계는 날짜 검사 제외 시험에서 통과했고, 원본 오프셋 시간 형식은 BearSSL 48과 OpenSSL 13으로 거부됐다. | AASDK README는 소스의 GPLv3를 명시한다. JVC 신원을 현재 시험 환경에서 쓸 수 있다는 별도 허가는 찾지 못했다. JanRi3D는 AASDK 공개 계열 신원으로 다른 삼성 폰의 TLS 및 영상 출력과 별도 USB 투사를 보고했다. 송신 리프 지문과 대상 앱 버전의 일치는 미확인이다. [AASDK README](https://github.com/f1xpl/aasdk/blob/development/Readme.md) · [OpenAuto 실폰 시험](https://github.com/JanRi3D/OpenAuto/blob/main/docs/TEST-RESULTS.md#4-physical-radio-and-phone-results) |
+| Open Headunit Google-Android-Reference | 기존 보고의 RSA 모듈러스 일치를 인용. 유효기간 2014-07-08~2044-07-07 UTC, BearSSL 오류 0, RSA 2048, GAL 체인과 OpenSSL 클라이언트 목적 검증 성공. | 이전 조사에서 확인하지 못한 답변을 원문에서 찾았다. 유지보수자는 9월 14일 DHU에서 가져온 신원이라고 설명했고 해당 신원의 별도 사용 허가를 알지 못한다고 답했다. OHU 3.3.0과 Android Auto 17.4의 USB 성공 보고는 있지만 송신 리프 지문은 기록되지 않았고 현재 시험폰의 18.0.664294 수락 여부는 미확인이다. [유지보수자 답변](https://github.com/andreknieriem/open-headunit/discussions/637?plain=1) · [USB 시험 보고](https://github.com/andreknieriem/open-headunit/issues/387#issuecomment-5499478056) |
+
+공식 DHU 문서와 SDK 이용 약관에서 DHU 신원을 별도 WinCE 수신기에 등록할 수 있다는 허가는 찾지 못했다. 기존 Cinemo 평가 문의에서도 답변을 확인하지 못했다. 따라서 이번 단계에서 사용할 수 있는 시험 신원은 확보되지 않았다. 실폰 시험의 마지막 확인은 기존의 AOA·AAP 1.7, TLS 1.2 협상 및 CertificateVerify 송신이다. 상호 Finished, `AUTH_COMPLETE`, 채널 개설, WinCE 실화면과 터치는 사용이 허가된 RSA 리프·필요한 중간 체인·대응 키가 확보되면 별도 이미지에서 순서대로 확인한다. [공개 검증 로그](../../build/codex-post-auth-integration/approved-identity-public-preflight.log) · [Google DHU](https://developer.android.com/training/cars/testing/dhu) · [Android SDK 약관](https://developer.android.com/studio/terms) · [시험 이미지 등록 절차](../ANDROID_AUTO_AUTH_STATUS.md#실폰-재시험)

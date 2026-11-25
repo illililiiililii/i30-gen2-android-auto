@@ -19,3 +19,8 @@
 - 재개한 순정 시험의 첫 세션에서 800×480 영상 14개를 ACK했다. 중앙 접촉에 가상폰이 응답해 LCD 색이 변했고, 가상 MICOM 후진 중 입력이 가려졌다. 후진 해제 뒤 같은 TLS 세션으로 포커스가 돌아왔고 분리 후 표시가 해제됐다. 두 번째 USB 세션의 TLS와 `AUTH_COMPLETE`도 도달했다. [순정 시험 체크포인트](../../build/codex-post-auth-integration/resumed-stock/virtual-phone.progress.jsonl)
 - 사용자 우선순위에 따라 실폰의 기존 거부 시험을 반복하지 않았다. USB 재연결 뒤 TLS `CertificateRequest`까지만 읽어 GAL 루트와 일치하는 발급기관 한 개와 RSA PKCS#1/SHA-256을 확인했다. 공식 DHU·SDK·공인 시험기관의 공개 경로를 대조했고, 현재 프로젝트에서 쓸 수 있는 평가 신원은 확보되지 않았다. [실폰 및 발급 조건](../Codex-authentication-resolution/REAL_PHONE_TEST_RESULTS.md#폰이-요청하는-발급기관과-서명)
 - 이미 실행 중이던 순정 회귀를 종료까지 확인했다. 5회 재연결·표시 해제, 30개 영상 ACK, 후진 중 입력 차단과 복귀, 마지막 순정 메뉴가 검증됐다. 첫 세션의 제스처 검사에는 접촉 분할이 남았다. [최종 인계](FINAL_HANDOFF.md)
+
+## 2026-11-25 · 실폰 시험 신원 재검토
+
+- Open Headunit 유지보수자의 DHU 출처 설명과 별도 허가를 알지 못한다는 답변을 확인했다. 공개 Reference 리프는 BearSSL과 GAL 클라이언트 목적 검증을 통과했고, AASDK JVC 리프의 원본 유효기간 인코딩 오류를 확인했다.
+- ADB 연결과 WinCE 이미지·ARM DLL 매니페스트를 확인했다. 승인 범위가 입증된 시험 신원은 확보되지 않았다. 이번 실행은 공개 파일 검증에서 종료했으며 상호 TLS와 실화면 시험에 필요한 등록 조건을 기록했다. [시험 신원 검토](../Codex-authentication-resolution/REAL_PHONE_TEST_RESULTS.md#공개-시험-신원-후보-재검토)
