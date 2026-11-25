@@ -49,7 +49,8 @@ VIDEO_CHANNEL = 3
 def build_probe(compiler, scratch, lcd_bench, owned_window, calibrate, audio_query=False):
     source = kernel.ROOT / 'src/ce'
     imports, elf = scratch / 'probe.S', scratch / 'probe.elf'
-    api = (*API, 'waveOutOpen', 'waveInOpen') if audio_query else API
+    api = (*API, 'waveOutOpen', 'waveInOpen', 'waveOutGetNumDevs', 'waveInGetNumDevs',
+           'waveOutGetDevCaps', 'waveInGetDevCaps') if audio_query else API
     imports.write_text(import_assembly(rom_exports(), api), encoding='ascii')
     bench = ['-DI30_VIRTUAL_LCD_BENCH'] if lcd_bench else []
     if owned_window:
@@ -720,6 +721,12 @@ def verify(args):
             if args.audio_query:
                 status['wave_format_query'] = {direction.decode(): int(result, 16) for direction, result in
                                                re.findall(rb'i30 WAVE query (OUT|IN): ([a-f0-9]{8})', run.uart.output)}
+                status['wave_device_count'] = {direction.decode(): int(result, 16) for direction, result in
+                                               re.findall(rb'i30 WAVE devices (OUT|IN): ([a-f0-9]{8})', run.uart.output)}
+                status['wave_caps_return'] = {direction.decode(): int(result, 16) for direction, result in
+                                               re.findall(rb'i30 WAVE caps (OUT|IN): ([a-f0-9]{8})', run.uart.output)}
+                status['wave_caps_data'] = {direction.decode(): result.decode() for direction, result in
+                                            re.findall(rb'i30 WAVE data (OUT|IN): ([a-f0-9]{192})', run.uart.output)}
             if args.native_menu:
                 status.update(stock_navigation=run.navigation_ready, stock_menu=NAVIGATION_MENU_ACK in run.uart.output,
                               stock_consent=b'BUTTON_PUSH_AGREE_ON' in run.uart.output,
@@ -744,7 +751,8 @@ def verify(args):
     print(json.dumps(status, indent=2))
     if args.interleave_control and status['interleaved_control_pongs'] != 1:
         return False
-    if args.audio_query and set(status['wave_format_query']) != {'OUT', 'IN'}:
+    if args.audio_query and any(set(status[key]) != {'OUT', 'IN'} for key in
+                                ('wave_format_query', 'wave_device_count', 'wave_caps_return')):
         return False
     if args.stream_frames:
         return (len(status['cycles']) == args.cycles and

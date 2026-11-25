@@ -39,14 +39,42 @@ typedef struct WaveFormat {
 
 uint32_t waveOutOpen(void *, unsigned, const WaveFormat *, uintptr_t, uintptr_t, unsigned);
 uint32_t waveInOpen(void *, unsigned, const WaveFormat *, uintptr_t, uintptr_t, unsigned);
+unsigned waveOutGetNumDevs(void);
+unsigned waveInGetNumDevs(void);
+uint32_t waveOutGetDevCaps(unsigned, void *, unsigned);
+uint32_t waveInGetDevCaps(unsigned, void *, unsigned);
 
-static void report_wave_result(CE_WCHAR *line, unsigned offset, uint32_t result)
+static void report_wave_result(const CE_WCHAR *label, uint32_t result)
 {
     static const char digits[] = "0123456789abcdef";
+    CE_WCHAR line[64];
+    unsigned offset = 0;
+    while (*label && offset < sizeof(line) / sizeof(line[0]) - 11U)
+        line[offset++] = *label++;
     for (unsigned i = 0; i < 8; ++i) {
         line[offset + 7 - i] = digits[result & 15U];
         result >>= 4;
     }
+    line[offset + 8] = '\r';
+    line[offset + 9] = '\n';
+    line[offset + 10] = 0;
+    OutputDebugStringW(line);
+}
+
+static void report_wave_caps(const CE_WCHAR *label, const uint8_t *bytes, unsigned size)
+{
+    static const char digits[] = "0123456789abcdef";
+    CE_WCHAR line[220];
+    unsigned offset = 0;
+    while (*label)
+        line[offset++] = *label++;
+    for (unsigned i = 0; i < size && offset < sizeof(line) / sizeof(line[0]) - 4U; ++i) {
+        line[offset++] = digits[bytes[i] >> 4];
+        line[offset++] = digits[bytes[i] & 15U];
+    }
+    line[offset++] = '\r';
+    line[offset++] = '\n';
+    line[offset] = 0;
     OutputDebugStringW(line);
 }
 
@@ -55,10 +83,19 @@ static void probe_wave_formats(void)
     /* Same PCM formats as ce_wave.c. WAVE_FORMAT_QUERY does not open a stream. */
     const WaveFormat playback = {1, 2, 48000, 192000, 4, 16, 0};
     const WaveFormat capture = {1, 1, 16000, 32000, 2, 16, 0};
-    CE_WCHAR output[] = L"i30 WAVE query OUT: 00000000\r\n";
-    CE_WCHAR input[] = L"i30 WAVE query IN: 00000000\r\n";
-    report_wave_result(output, 20, waveOutOpen(0, (unsigned)-1, &playback, 0, 0, 1));
-    report_wave_result(input, 19, waveInOpen(0, (unsigned)-1, &capture, 0, 0, 1));
+    uint32_t output[24] = {0}, input[24] = {0};
+    report_wave_result(L"i30 WAVE devices OUT: ", waveOutGetNumDevs());
+    report_wave_result(L"i30 WAVE devices IN: ", waveInGetNumDevs());
+    uint32_t status = waveOutGetDevCaps(0, output, sizeof(output));
+    report_wave_result(L"i30 WAVE caps OUT: ", status);
+    if (!status)
+        report_wave_caps(L"i30 WAVE data OUT: ", (const uint8_t *)output, sizeof(output));
+    status = waveInGetDevCaps(0, input, sizeof(input));
+    report_wave_result(L"i30 WAVE caps IN: ", status);
+    if (!status)
+        report_wave_caps(L"i30 WAVE data IN: ", (const uint8_t *)input, sizeof(input));
+    report_wave_result(L"i30 WAVE query OUT: ", waveOutOpen(0, (unsigned)-1, &playback, 0, 0, 1));
+    report_wave_result(L"i30 WAVE query IN: ", waveInOpen(0, (unsigned)-1, &capture, 0, 0, 1));
 }
 #endif
 
