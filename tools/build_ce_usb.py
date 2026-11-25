@@ -18,8 +18,9 @@ from build_ce_minimal import IMAGE_BASE, PAGE, align, import_assembly, native_se
 from inspect_ce_pe import inspect, rom_exports
 from inspect_firmware import ROOT
 
-DRIVER_API = ('CreateEventW', 'GetLastError', 'EventModify', 'CloseHandle', 'WaitForSingleObject', 'GetTickCount', 'Sleep')
-TLS_API = ('CreateFileW', 'ReadFile', 'OutputDebugStringW', 'LocalAlloc', 'LocalFree',
+DRIVER_API = ('CreateEventW', 'GetLastError', 'EventModify', 'CloseHandle', 'WaitForSingleObject', 'GetTickCount', 'Sleep',
+              'OutputDebugStringW')
+TLS_API = ('CreateFileW', 'ReadFile', 'LocalAlloc', 'LocalFree',
            'CeGenRandom', 'GetSystemTimeAsFileTime')
 VIDEO_API = ('FindWindowW', 'GetForegroundWindow', 'GetDC', 'ReleaseDC', 'StretchDIBits',
              'GetProcessHeap', 'HeapAlloc', 'HeapFree', 'GetDCEx', 'GetClipBox',

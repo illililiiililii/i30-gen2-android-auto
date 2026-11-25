@@ -21,7 +21,6 @@
 typedef struct CeUsbDriverSettings CeUsbDriverSettings;
 
 CE_HANDLE CreateEventW(void *, int, int, const CE_WCHAR *);
-uint32_t GetLastError(void);
 int EventModify(CE_HANDLE, uint32_t);
 #define SetEvent(event) EventModify((event), 3U)
 void Sleep(uint32_t);

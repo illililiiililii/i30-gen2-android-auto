@@ -129,23 +129,49 @@ static void signal_status(const CE_WCHAR *name)
     }
 }
 
+static void transfer_error(uint32_t code)
+{
+    static const char hex[] = "0123456789abcdef";
+    static const CE_WCHAR message[] = L"i30 CE USB transfer error: 0x00000000\r\n";
+    CE_WCHAR line[sizeof(message) / sizeof(message[0])];
+    for (unsigned i = 0; i < sizeof(line) / sizeof(line[0]); ++i)
+        line[i] = message[i];
+    for (unsigned i = 0; i < 8; ++i)
+        line[sizeof(line) / sizeof(line[0]) - 4U - i] = hex[(code >> (4U * i)) & 15U];
+    OutputDebugStringW(line);
+}
+
 static int finish(UsbLink *link, CE_HANDLE transfer, unsigned capacity)
 {
     uint32_t length = 0, error = 1;
-    int result = -1;
-    if (!transfer)
+    int result = -1, completed = 0;
+    if (!transfer) {
+        OutputDebugStringW(L"i30 CE USB transfer submission failed.\r\n");
         return -1;
+    }
     while (transfer_allowed(link)) {
         if (link->api->complete(transfer)) {
-            if (link->api->status(transfer, &length, &error) && !error && length <= capacity)
+            completed = 1;
+            if (!link->api->status(transfer, &length, &error))
+                OutputDebugStringW(L"i30 CE USB transfer status unavailable.\r\n");
+            else if (error)
+                transfer_error(error);
+            else if (length > capacity)
+                OutputDebugStringW(L"i30 CE USB transfer length exceeds request.\r\n");
+            else
                 result = (int)length;
             break;
         }
         Sleep(10);
     }
     /* Stock CloseTransfer aborts unfinished transfers before releasing the handle. */
-    if (!link->api->close_transfer(transfer))
+    if (!link->api->close_transfer(transfer)) {
+        OutputDebugStringW(L"i30 CE USB transfer cleanup failed.\r\n");
         result = -1;
+    }
+    if (!completed)
+        OutputDebugStringW(running(link->stop) ? L"i30 CE USB transfer timed out.\r\n" :
+                           L"i30 CE USB transfer cancelled.\r\n");
     return result;
 }
 
@@ -201,8 +227,13 @@ static int read_link(void *opaque, uint8_t *data, unsigned capacity)
     UsbLink *link = opaque;
     unsigned count, i;
     int length;
-    if (!transfer_allowed(link) || !capacity)
+    if (!capacity)
         return -1;
+    if (!transfer_allowed(link)) {
+        OutputDebugStringW(running(link->stop) ? L"i30 CE USB read deadline reached.\r\n" :
+                           L"i30 CE USB read cancelled.\r\n");
+        return -1;
+    }
     if (link->offset == link->used) {
         unsigned flags = USB_IN | USB_NO_WAIT;
         if (link->read_size != AA_VERSION_FRAME)
@@ -251,6 +282,9 @@ static int write_tls(void *opaque, const uint8_t *data, unsigned size)
             return -1;
         sent += count;
     }
+    if (sent < size)
+        OutputDebugStringW(running(link->stop) ? L"i30 CE USB write deadline reached.\r\n" :
+                           L"i30 CE USB write cancelled.\r\n");
     return (int)sent;
 }
 #endif

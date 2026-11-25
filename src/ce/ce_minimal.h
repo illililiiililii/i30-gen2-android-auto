@@ -15,6 +15,7 @@ typedef void *CE_HANDLE;
 typedef uint32_t (*CE_THREAD)(void *context);
 
 void OutputDebugStringW(const CE_WCHAR *text);
+uint32_t GetLastError(void);
 CE_HANDLE CreateFileW(const CE_WCHAR *path, uint32_t access, uint32_t share, void *security,
                      uint32_t creation, uint32_t flags, CE_HANDLE template_file);
 int ReadFile(CE_HANDLE file, void *buffer, uint32_t size, uint32_t *read, void *overlapped);

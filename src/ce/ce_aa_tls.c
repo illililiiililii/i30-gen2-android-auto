@@ -22,6 +22,8 @@ void GetSystemTimeAsFileTime(uint64_t *time);
 #define TLS_PATH L"\\DiskA\\Application\\NAVI\\"
 #define CLIENT_CHAIN_MAX 4U
 
+enum { FILE_MISSING = -1, FILE_UNREADABLE = -2, FILE_FORMAT = -3 };
+
 typedef struct PinnedChain {
     const br_x509_class *vtable;
     const br_x509_class **chain;
@@ -41,6 +43,13 @@ typedef struct ProtectedMessage {
     unsigned used, total, flags;
 } ProtectedMessage;
 
+typedef struct HandshakeTrace {
+    uint8_t record[5], message[4], certificate[6];
+    unsigned record_used, message_used, certificate_used;
+    unsigned record_left, message_left, leaf_left;
+    int encrypted;
+} HandshakeTrace;
+
 typedef struct Session {
     br_ssl_client_context client;
     br_x509_minimal_context validation;
@@ -52,6 +61,8 @@ typedef struct Session {
     br_skey_decoder_context identity_key;
     br_x509_certificate identity[CLIENT_CHAIN_MAX];
     PinnedChain pinned;
+    HandshakeTrace tx, rx;
+    br_sha256_context sent_leaf;
     uint8_t io[BR_SSL_BUFSIZE_BIDI];
     uint8_t wire[TLS_FRAME_MAX + 6U];
     uint8_t control[0x4000];
@@ -128,13 +139,10 @@ static const br_x509_class pinned_chain = {
     sizeof(PinnedChain), pin_start, pin_certificate, pin_append, pin_end_certificate, pin_end, pin_key
 };
 
-static unsigned bounded_file(const CE_WCHAR *path, void *bytes, unsigned capacity)
+static unsigned read_bounded(CE_HANDLE file, void *bytes, unsigned capacity)
 {
-    CE_HANDLE file = CreateFileW(path, 0x80000000U, 1, 0, 3, 0x80, 0);
     uint32_t length = 0, end = 0;
     uint8_t surplus;
-    if (file == (CE_HANDLE)-1)
-        return 0;
     if (!ReadFile(file, bytes, capacity, &length, 0) ||
         !ReadFile(file, &surplus, 1, &end, 0) || end)
         length = 0;
@@ -142,13 +150,10 @@ static unsigned bounded_file(const CE_WCHAR *path, void *bytes, unsigned capacit
     return length;
 }
 
-static int file_present(const CE_WCHAR *path)
+static unsigned bounded_file(const CE_WCHAR *path, void *bytes, unsigned capacity)
 {
     CE_HANDLE file = CreateFileW(path, 0x80000000U, 1, 0, 3, 0x80, 0);
-    if (file == (CE_HANDLE)-1)
-        return 0;
-    CloseHandle(file);
-    return 1;
+    return file == (CE_HANDLE)-1 ? 0 : read_bounded(file, bytes, capacity);
 }
 
 static void append_credential(void *context, const void *data, size_t length)
@@ -162,17 +167,28 @@ static void append_credential(void *context, const void *data, size_t length)
     out->length += length;
 }
 
-static unsigned read_credentials(Session *s, const CE_WCHAR *der, const CE_WCHAR *pem,
-                                 uint8_t *bytes, size_t capacity, br_x509_certificate *objects,
-                                 unsigned limit, int private_key)
+static int missing_file(uint32_t error)
 {
-    const CE_WCHAR *path = file_present(der) ? der : pem;
-    unsigned length = bounded_file(path, s->encoded, sizeof(s->encoded) - 1U);
+    return error == 2U || error == 3U; /* ERROR_FILE_NOT_FOUND or ERROR_PATH_NOT_FOUND */
+}
+
+static CE_HANDLE open_credential(const CE_WCHAR *der, const CE_WCHAR *pem)
+{
+    CE_HANDLE file = CreateFileW(der, 0x80000000U, 1, 0, 3, 0x80, 0);
+    if (file == (CE_HANDLE)-1 && missing_file(GetLastError()))
+        file = CreateFileW(pem, 0x80000000U, 1, 0, 3, 0x80, 0);
+    return file;
+}
+
+static int decode_credentials(Session *s, CE_HANDLE file, uint8_t *bytes, size_t capacity,
+                              br_x509_certificate *objects, unsigned limit, int private_key)
+{
+    unsigned length = read_bounded(file, s->encoded, sizeof(s->encoded) - 1U);
     if (!length)
-        return 0;
+        return FILE_UNREADABLE;
     if (s->encoded[0] == 0x30) {
         if (length > capacity)
-            return 0;
+            return FILE_FORMAT;
         memcpy(bytes, s->encoded, length);
         objects[0] = (br_x509_certificate){bytes, length};
         return 1;
@@ -190,29 +206,32 @@ static unsigned read_credentials(Session *s, const CE_WCHAR *der, const CE_WCHAR
             if (open || count == limit ||
                 (private_key ? (strcmp(name, "PRIVATE KEY") && strcmp(name, "RSA PRIVATE KEY"))
                              : strcmp(name, "CERTIFICATE")))
-                return 0;
+                return FILE_FORMAT;
             objects[count].data = bytes + s->decoded.length;
             open = 1;
             br_pem_decoder_setdest(&s->pem, append_credential, &s->decoded);
         } else if (event == BR_PEM_END_OBJ) {
             if (!open || s->decoded.overflow || objects[count].data == bytes + s->decoded.length)
-                return 0;
+                return FILE_FORMAT;
             objects[count].data_len = (size_t)(bytes + s->decoded.length - objects[count].data);
             ++count;
             open = 0;
         } else if (event == BR_PEM_ERROR || !consumed) {
-            return 0;
+            return FILE_FORMAT;
         }
         offset += (unsigned)consumed;
     }
-    return open ? 0 : count;
+    return open || !count ? FILE_FORMAT : (int)count;
 }
 
-static size_t read_credential(Session *s, const CE_WCHAR *der, const CE_WCHAR *pem,
-                              uint8_t *bytes, size_t capacity, int private_key)
+static int read_credentials(Session *s, const CE_WCHAR *der, const CE_WCHAR *pem,
+                            uint8_t *bytes, size_t capacity, br_x509_certificate *objects,
+                            unsigned limit, int private_key)
 {
-    br_x509_certificate object;
-    return read_credentials(s, der, pem, bytes, capacity, &object, 1, private_key) ? object.data_len : 0;
+    CE_HANDLE file = open_credential(der, pem);
+    if (file == (CE_HANDLE)-1)
+        return missing_file(GetLastError()) ? FILE_MISSING : FILE_UNREADABLE;
+    return decode_credentials(s, file, bytes, capacity, objects, limit, private_key);
 }
 
 static int der_read(Der *source, uint8_t tag, Der *field)
@@ -342,6 +361,121 @@ static void debug_number(const CE_WCHAR *label, uint32_t value)
     OutputDebugStringW(line);
 }
 
+static void debug_fingerprint(const CE_WCHAR *label, const uint8_t *digest)
+{
+    static const char hex[] = "0123456789abcdef";
+    CE_WCHAR line[128];
+    unsigned length = 0;
+    while (*label)
+        line[length++] = *label++;
+    for (unsigned i = 0; i < 32; ++i) {
+        line[length++] = hex[digest[i] >> 4];
+        line[length++] = hex[digest[i] & 15U];
+    }
+    line[length++] = '\r';
+    line[length++] = '\n';
+    line[length] = 0;
+    OutputDebugStringW(line);
+}
+
+static void debug_file_error(int result)
+{
+    OutputDebugStringW(result == FILE_MISSING ? L"i30 CE TLS credential file missing.\r\n" :
+                       result == FILE_UNREADABLE ? L"i30 CE TLS credential file empty, unreadable or oversized.\r\n" :
+                       L"i30 CE TLS credential file format invalid.\r\n");
+}
+
+static unsigned big_endian(const uint8_t *bytes, unsigned size)
+{
+    unsigned value = 0;
+    while (size--)
+        value = (value << 8) | *bytes++;
+    return value;
+}
+
+static void trace_certificate(Session *s, HandshakeTrace *trace, const uint8_t *bytes, unsigned size)
+{
+    while (size && trace->certificate_used < sizeof(trace->certificate)) {
+        trace->certificate[trace->certificate_used++] = *bytes++;
+        --size;
+        if (trace->certificate_used == sizeof(trace->certificate)) {
+            unsigned list_size = big_endian(trace->certificate, 3);
+            unsigned leaf_size = big_endian(trace->certificate + 3, 3);
+            if (list_size >= 3 && leaf_size <= list_size - 3)
+                trace->leaf_left = leaf_size;
+            br_sha256_init(&s->sent_leaf);
+        }
+    }
+    if (trace->leaf_left && size) {
+        if (size > trace->leaf_left)
+            size = trace->leaf_left;
+        br_sha256_update(&s->sent_leaf, bytes, size);
+        trace->leaf_left -= size;
+        if (!trace->leaf_left) {
+            uint8_t digest[32];
+            br_sha256_out(&s->sent_leaf, digest);
+            debug_fingerprint(L"i30 CE TLS sent leaf SHA-256: ", digest);
+        }
+    }
+}
+
+/* Observe completed plaintext handshake messages across TLS record boundaries.
+   BearSSL handles validation and authenticates the encrypted Finished messages. */
+static void trace_handshake(Session *s, HandshakeTrace *trace, const uint8_t *bytes, unsigned size)
+{
+    while (size) {
+        if (trace->message_used < sizeof(trace->message)) {
+            trace->message[trace->message_used++] = *bytes++;
+            --size;
+            if (trace->message_used < sizeof(trace->message))
+                continue;
+            trace->message_left = big_endian(trace->message + 1, 3);
+            trace->certificate_used = trace->leaf_left = 0;
+        }
+        unsigned take = size < trace->message_left ? size : trace->message_left;
+        unsigned type = trace->message[0];
+        if (trace == &s->tx && type == 11U)
+            trace_certificate(s, trace, bytes, take);
+        bytes += take;
+        size -= take;
+        trace->message_left -= take;
+        if (!trace->message_left) {
+            trace->message_used = 0;
+            debug_number(trace == &s->tx ? L"i30 CE TLS handshake message sent: " :
+                         L"i30 CE TLS handshake message received: ", type);
+            if (trace == &s->tx && type == 1U)
+                OutputDebugStringW(L"i30 CE TLS ClientHello sent.\r\n");
+        }
+    }
+}
+
+static void trace_records(Session *s, HandshakeTrace *trace, const uint8_t *bytes, unsigned size)
+{
+    while (size && !trace->encrypted) {
+        if (trace->record_used < sizeof(trace->record)) {
+            trace->record[trace->record_used++] = *bytes++;
+            --size;
+            if (trace->record_used < sizeof(trace->record))
+                continue;
+            trace->record_left = big_endian(trace->record + 3, 2);
+        }
+        unsigned take = size < trace->record_left ? size : trace->record_left;
+        if (trace->record[0] == 22U)
+            trace_handshake(s, trace, bytes, take);
+        bytes += take;
+        size -= take;
+        trace->record_left -= take;
+        if (!trace->record_left) {
+            trace->record_used = 0;
+            if (trace->record[0] == 20U) {
+                trace->encrypted = 1;
+                OutputDebugStringW(trace == &s->tx ? L"i30 CE TLS ChangeCipherSpec sent.\r\n" :
+                                   L"i30 CE TLS ChangeCipherSpec received.\r\n");
+            }
+        }
+    }
+}
+
 static int read_utc(Utc *utc)
 {
     uint64_t filetime = 0;
@@ -394,18 +528,64 @@ static int parse_pin(uint8_t *digest, const char *text, unsigned size)
     return 1;
 }
 
-static const CE_WCHAR *configure(Session *s)
+static int client_chain_valid(Session *s, unsigned count, Utc now)
 {
-    uint8_t seed[32];
+    br_x509_trust_anchor issuer;
+    Utc start, end;
+    for (unsigned i = 1; i < count; ++i) {
+        const br_x509_certificate *cert = &s->identity[i];
+        if (!client_validity(cert, &start, &end) || utc_before(now, start) || utc_before(end, now)) {
+            debug_number(L"i30 CE TLS issuer validity rejected at chain index: ", i);
+            return 0;
+        }
+        s->dn_size = 0;
+        br_x509_decoder_init(&s->client_decoder, append_dn, s);
+        br_x509_decoder_push(&s->client_decoder, cert->data, cert->data_len);
+        const br_x509_pkey *key = br_x509_decoder_get_pkey(&s->client_decoder);
+        if (!key || !br_x509_decoder_isCA(&s->client_decoder) || !s->dn_size || s->dn_size > sizeof(s->dn)) {
+            debug_number(L"i30 CE TLS issuer certificate rejected at chain index: ", i);
+            debug_number(L"i30 CE TLS issuer decoder result: ", br_x509_decoder_last_error(&s->client_decoder));
+            return 0;
+        }
+        issuer = (br_x509_trust_anchor){{s->dn, s->dn_size}, BR_X509_TA_CA, *key};
+        /* Check every prefix against its next issuer, using only the supplied chain.
+           The remote peer still decides whether the chain ends at a trusted root. */
+        br_x509_minimal_init_full(&s->validation, &issuer, 1);
+        br_x509_minimal_set_time(&s->validation, now.day, now.second);
+        const br_x509_class **validator = &s->validation.vtable;
+        (*validator)->start_chain(validator, 0);
+        for (unsigned j = 0; j < i; ++j) {
+            const br_x509_certificate *member = &s->identity[j];
+            (*validator)->start_cert(validator, (uint32_t)member->data_len);
+            (*validator)->append(validator, member->data, member->data_len);
+            (*validator)->end_cert(validator);
+        }
+        unsigned error = (*validator)->end_chain(validator);
+        if (error) {
+            debug_number(L"i30 CE TLS supplied client chain validation error: ", error);
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static const CE_WCHAR *configure(Session *s, CE_HANDLE ca_file)
+{
+    uint8_t seed[32], digest[32];
+    br_sha256_context hash;
     char pin[67];
     Utc now, start, end;
-    unsigned name_size, pin_size, identity_count;
-    size_t ca_size, key_size;
+    unsigned name_size, pin_size;
+    br_x509_certificate ca, key_file;
     const br_x509_pkey *key;
     const br_rsa_private_key *client_key;
+    int result = decode_credentials(s, ca_file, s->ca, sizeof(s->ca), &ca, 1, 0);
+    if (result < 0) {
+        debug_file_error(result);
+        return L"i30 CE TLS trust CA missing, unreadable or invalid.\r\n";
+    }
     if (!read_utc(&now))
         return L"i30 CE TLS guest UTC unavailable or invalid.\r\n";
-    ca_size = read_credential(s, TLS_PATH L"i30-ca.der", TLS_PATH L"i30-ca.pem", s->ca, sizeof(s->ca), 0);
     name_size = bounded_file(TLS_PATH L"i30-peer.txt", s->peer, sizeof(s->peer) - 1U);
     pin_size = bounded_file(TLS_PATH L"i30-peer-sha256.txt", pin, sizeof(pin));
     name_size = trim_line(s->peer, name_size);
@@ -420,44 +600,61 @@ static const CE_WCHAR *configure(Session *s)
             return L"i30 CE TLS peer hostname or fingerprint configuration invalid.\r\n";
     }
     s->peer[name_size] = '\0';
+    int identity_count = read_credentials(s, TLS_PATH L"i30-client.der", TLS_PATH L"i30-client.pem",
+                                          s->client_cert, sizeof(s->client_cert), s->identity, CLIENT_CHAIN_MAX, 0);
+    if (identity_count < 0) {
+        debug_file_error(identity_count);
+        return L"i30 CE TLS head unit certificate missing, unreadable or invalid.\r\n";
+    }
+    br_sha256_init(&hash);
+    br_sha256_update(&hash, s->identity[0].data, s->identity[0].data_len);
+    br_sha256_out(&hash, digest);
+    debug_fingerprint(L"i30 CE TLS loaded leaf SHA-256: ", digest);
+    br_x509_decoder_init(&s->client_decoder, 0, 0);
+    br_x509_decoder_push(&s->client_decoder, s->identity[0].data, s->identity[0].data_len);
+    debug_number(L"i30 CE TLS head unit certificate decoder result: ", br_x509_decoder_last_error(&s->client_decoder));
+    key = br_x509_decoder_get_pkey(&s->client_decoder);
+    if (!key || key->key_type != BR_KEYTYPE_RSA)
+        return L"i30 CE TLS head unit certificate missing, unreadable or invalid.\r\n";
+    if (!client_validity(&s->identity[0], &start, &end))
+        return L"i30 CE TLS head unit certificate validity field invalid.\r\n";
+    if (utc_before(now, start))
+        return L"i30 CE TLS head unit certificate is not yet valid at guest UTC.\r\n";
+    if (utc_before(end, now))
+        return L"i30 CE TLS head unit certificate expired at guest UTC.\r\n";
+    result = read_credentials(s, TLS_PATH L"i30-client-key.der", TLS_PATH L"i30-client-key.pem",
+                              s->key_der, sizeof(s->key_der), &key_file, 1, 1);
+    if (result < 0) {
+        debug_file_error(result);
+        return L"i30 CE TLS head unit RSA key missing, unreadable or invalid.\r\n";
+    }
+    br_skey_decoder_init(&s->identity_key);
+    br_skey_decoder_push(&s->identity_key, key_file.data, key_file.data_len);
+    client_key = br_skey_decoder_get_rsa(&s->identity_key);
+    if (!client_key)
+        return L"i30 CE TLS head unit RSA key missing, unreadable or invalid.\r\n";
+    if (!matches_key(&key->key.rsa, client_key, (Der){key_file.data, key_file.data_len}))
+        return L"i30 CE TLS head unit certificate and RSA key do not match.\r\n";
+    if (!client_chain_valid(s, (unsigned)identity_count, now))
+        return L"i30 CE TLS head unit certificate chain invalid.\r\n";
+    s->dn_size = 0;
     br_x509_decoder_init(&s->cert, append_dn, s);
-    br_x509_decoder_push(&s->cert, s->ca, ca_size);
+    br_x509_decoder_push(&s->cert, ca.data, ca.data_len);
+    debug_number(L"i30 CE TLS trust CA decoder result: ", br_x509_decoder_last_error(&s->cert));
     key = br_x509_decoder_get_pkey(&s->cert);
-    if (!ca_size || !key || !br_x509_decoder_isCA(&s->cert) || !s->dn_size || s->dn_size > sizeof(s->dn))
+    Der ca_der = {ca.data, ca.data_len}, ca_sequence;
+    if (!key || !br_x509_decoder_isCA(&s->cert) || !s->dn_size || s->dn_size > sizeof(s->dn) ||
+        !der_read(&ca_der, 0x30, &ca_sequence) || ca_der.length)
         return L"i30 CE TLS trust CA missing, unreadable or invalid.\r\n";
-    s->anchor.dn.data = s->dn;
-    s->anchor.dn.len = s->dn_size;
-    s->anchor.flags = BR_X509_TA_CA;
-    s->anchor.pkey = *key;
+    s->anchor = (br_x509_trust_anchor){{s->dn, s->dn_size}, BR_X509_TA_CA, *key};
     br_ssl_client_init_full(&s->client, &s->validation, &s->anchor, 1);
     if (pin_size) {
         s->pinned.vtable = &pinned_chain;
         s->pinned.chain = &s->validation.vtable;
         br_ssl_engine_set_x509(&s->client.eng, &s->pinned.vtable);
     }
-    identity_count = read_credentials(s, TLS_PATH L"i30-client.der", TLS_PATH L"i30-client.pem",
-                                      s->client_cert, sizeof(s->client_cert), s->identity, CLIENT_CHAIN_MAX, 0);
-    if (!identity_count)
-        return L"i30 CE TLS head unit certificate missing, unreadable or invalid.\r\n";
-    br_x509_decoder_init(&s->client_decoder, 0, 0);
-    br_x509_decoder_push(&s->client_decoder, s->identity[0].data, s->identity[0].data_len);
-    key = br_x509_decoder_get_pkey(&s->client_decoder);
-    if (!key || key->key_type != BR_KEYTYPE_RSA || !client_validity(&s->identity[0], &start, &end))
-        return L"i30 CE TLS head unit certificate missing, unreadable or invalid.\r\n";
-    if (utc_before(now, start))
-        return L"i30 CE TLS head unit certificate is not yet valid at guest UTC.\r\n";
-    if (utc_before(end, now))
-        return L"i30 CE TLS head unit certificate expired at guest UTC.\r\n";
-    key_size = read_credential(s, TLS_PATH L"i30-client-key.der", TLS_PATH L"i30-client-key.pem",
-                               s->key_der, sizeof(s->key_der), 1);
-    br_skey_decoder_init(&s->identity_key);
-    br_skey_decoder_push(&s->identity_key, s->key_der, key_size);
-    client_key = br_skey_decoder_get_rsa(&s->identity_key);
-    if (!client_key)
-        return L"i30 CE TLS head unit RSA key missing, unreadable or invalid.\r\n";
-    if (!matches_key(&key->key.rsa, client_key, (Der){s->key_der, key_size}))
-        return L"i30 CE TLS head unit certificate and RSA key do not match.\r\n";
-    br_ssl_client_set_single_rsa(&s->client, s->identity, identity_count, client_key, br_rsa_pkcs1_sign_get_default());
+    br_ssl_client_set_single_rsa(&s->client, s->identity, (unsigned)identity_count, client_key,
+                                 br_rsa_pkcs1_sign_get_default());
     br_ssl_engine_set_versions(&s->client.eng, BR_TLS12, BR_TLS12);
     br_ssl_engine_set_buffer(&s->client.eng, s->io, sizeof(s->io), 1);
     br_x509_minimal_set_time(&s->validation, now.day, now.second);
@@ -737,6 +934,7 @@ static int discover(Session *s, const I30Link *link, void (*start_video)(void *)
         memcpy(s->control + 2 + sizeof(video_channel), identity + 2, sizeof(identity) - 2);
         if (!secure_write(s, link, 0, 0, s->control, sizeof(identity) + sizeof(video_channel)))
             return 0;
+        OutputDebugStringW(L"i30 CE authenticated service discovery completed.\r\n");
         start_video(link->context);
         MediaLink media = {s, link};
         I30SecureChannel transport = {&media, send_media, receive_media};
@@ -765,6 +963,8 @@ static const CE_WCHAR *handshake_error(Session *s)
             return L"i30 CE TLS phone rejected the head unit certificate chain (unknown CA).\r\n";
         return L"i30 CE TLS phone sent a fatal alert.\r\n";
     }
+    if (error >= BR_ERR_SEND_FATAL_ALERT)
+        debug_number(L"i30 CE TLS local fatal alert: ", error - BR_ERR_SEND_FATAL_ALERT);
     if (error == BR_ERR_X509_EXPIRED || error == BR_ERR_X509_TIME_UNKNOWN)
         return L"i30 CE TLS phone certificate rejected at guest UTC.\r\n";
     if (error == BR_ERR_X509_BAD_SERVER_NAME)
@@ -784,7 +984,7 @@ static const CE_WCHAR *handshake_error(Session *s)
 static const CE_WCHAR *handshake(Session *s, const I30Link *link)
 {
     br_ssl_engine_context *engine = &s->client.eng;
-    int sent_hello = 0, received_tls = 0;
+    int received_tls = 0, negotiated = 0;
     for (unsigned step = 0; step < 256U; ++step) {
         unsigned state = br_ssl_engine_current_state(engine);
         size_t size;
@@ -794,11 +994,8 @@ static const CE_WCHAR *handshake(Session *s, const I30Link *link)
             uint8_t *record = br_ssl_engine_sendrec_buf(engine, &size);
             if (!send_record(s, link, record, size))
                 return L"i30 CE TLS USB write interrupted.\r\n";
+            trace_records(s, &s->tx, record, (unsigned)size);
             br_ssl_engine_sendrec_ack(engine, size);
-            if (!sent_hello) {
-                OutputDebugStringW(L"i30 CE TLS ClientHello sent.\r\n");
-                sent_hello = 1;
-            }
         } else if (state & BR_SSL_SENDAPP) {
             if (s->fragment_remaining || s->message_remaining)
                 return L"i30 CE TLS invalid Android Auto handshake frame.\r\n";
@@ -817,7 +1014,13 @@ static const CE_WCHAR *handshake(Session *s, const I30Link *link)
                 OutputDebugStringW(L"i30 CE TLS first phone record bytes received.\r\n");
                 received_tls = 1;
             }
+            trace_records(s, &s->rx, record, (unsigned)count);
             br_ssl_engine_recvrec_ack(engine, (size_t)count);
+            if (!negotiated && engine->session.cipher_suite) {
+                debug_number(L"i30 CE TLS negotiated version (decimal): ", br_ssl_engine_get_version(engine));
+                debug_number(L"i30 CE TLS negotiated cipher suite (decimal): ", engine->session.cipher_suite);
+                negotiated = 1;
+            }
         } else {
             return handshake_error(s);
         }
@@ -827,17 +1030,23 @@ static const CE_WCHAR *handshake(Session *s, const I30Link *link)
 
 int i30_ce_authenticate(const I30Link *link, void (*start_video)(void *))
 {
-    Session *session;
-    if (!file_present(TLS_PATH L"i30-ca.der") && !file_present(TLS_PATH L"i30-ca.pem")) {
-        OutputDebugStringW(L"i30 CE TLS waiting for enrolled trust material.\r\n");
+    CE_HANDLE ca_file = open_credential(TLS_PATH L"i30-ca.der", TLS_PATH L"i30-ca.pem");
+    if (ca_file == (CE_HANDLE)-1) {
+        if (missing_file(GetLastError())) {
+            OutputDebugStringW(L"i30 CE TLS waiting for enrolled trust material.\r\n");
+        } else {
+            debug_file_error(FILE_UNREADABLE);
+            OutputDebugStringW(L"i30 CE TLS trust CA missing, unreadable or invalid.\r\n");
+        }
         return 1;
     }
-    session = LocalAlloc(0x40, sizeof(*session)); /* Fixed, zero initialized. */
+    Session *session = LocalAlloc(0x40, sizeof(*session)); /* Fixed, zero initialized. */
     if (!session) {
+        CloseHandle(ca_file);
         OutputDebugStringW(L"i30 CE TLS session allocation failed.\r\n");
         return 0;
     }
-    const CE_WCHAR *status = configure(session);
+    const CE_WCHAR *status = configure(session, ca_file);
     const int configuration_required = status != 0;
     if (!status)
         status = handshake(session, link);

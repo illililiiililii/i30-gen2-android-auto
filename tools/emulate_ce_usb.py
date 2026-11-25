@@ -2,9 +2,11 @@
 
 import argparse
 from collections import Counter
+from datetime import datetime, timezone
 from hashlib import sha256
 import json
 from pathlib import Path
+import re
 import ssl
 import struct
 import subprocess
@@ -178,6 +180,7 @@ class UsbClient(Machine):
         return self.ms
 
     def CreateFileW(self, *_):
+        self.event_error = 2
         return -1  # No TLS identity is enrolled in the baseline USB tests.
 
     def OutputDebugStringW(self, message, *_):
@@ -278,6 +281,7 @@ class TlsUsbClient(UsbClient):
         self.video_deadline = video_deadline
         self.clock = int(time()) if clock is None else clock
         self.silent = silent
+        self.stalled_transfer = 0
         self.handshake_reply = handshake_reply
         self.interleave_control = interleave_control
         self.owner = 0x9000 if video else 0
@@ -406,6 +410,10 @@ class TlsUsbClient(UsbClient):
     def CreateFileW(self, name, *_):
         filename = self.text(name).rsplit('\\', 1)[-1]
         if filename not in self.files:
+            self.event_error = 2
+            return -1
+        if self.files[filename] is None:
+            self.event_error = 5
             return -1
         handle = 0x100 + list(self.files).index(filename)
         self.positions[handle] = (filename, 0)
@@ -495,13 +503,18 @@ class TlsUsbClient(UsbClient):
         self.cpu.mem_write(output, struct.pack('<Q', (self.clock + 11644473600) * 10000000))
         return 0
 
+    def complete(self, transfer, *_):
+        return 0 if transfer == self.stalled_transfer else super().complete(transfer)
+
     def bulk(self, pipe, callback, context, flag, size, data, pa):
         if ((flag & 0x80 and size == 12) or (not flag & 0x80 and not self.wire_writes)):
             return super().bulk(pipe, callback, context, flag, size, data, pa)
         if flag & 0x80:
             assert (pipe, size, flag) == (0x81, 512, 0x380)
             if not self.pending:
-                return 0
+                if self.silent:
+                    self.stalled_transfer = self.issue(0)
+                return self.stalled_transfer
             chunk = bytes(self.pending[:size])
             del self.pending[:size]
             self.cpu.mem_write(data, chunk)
@@ -539,6 +552,20 @@ def fragmented_tls_reply(outgoing, total_adjustment=0):
             struct.pack('>BBH', 0, 2, len(message) - 5) + message[5:])
 
 
+def replace_test_validity(cert, start, end):
+    # Test only the local validity parser. The modified certificate is never enrolled at the peer.
+    def sequence(body):
+        return b'\x30\x82' + len(body).to_bytes(2, 'big') + body
+
+    assert cert[:2] == cert[4:6] == b'\x30\x82'
+    tbs_end = 8 + int.from_bytes(cert[6:8], 'big')
+    tbs = cert[8:tbs_end]
+    validity = re.search(rb'\x30\x1e\x17\x0d[0-9]{12}Z\x17\x0d[0-9]{12}Z', tbs)
+    fields = b''.join(bytes((tag, len(value))) + value for tag, value in (start, end))
+    tbs = tbs[:validity.start()] + bytes((0x30, len(fields))) + fields + tbs[validity.end():]
+    return sequence(sequence(tbs) + cert[tbs_end:])
+
+
 def test_tls(path, openssl, exercise_projection=False):
     sys.path.insert(0, str(FORMAT.parents[2] / 'src'))
     from i30_receiver.mock import test_identity
@@ -563,12 +590,22 @@ def test_tls(path, openssl, exercise_projection=False):
         assert verified.services.headunit_info.head_unit_model == 'GD13MY'
         assert not verified.services.channels and verified.closed_gracefully
         assert verified.peer.cipher() == (reference_cipher, 'TLSv1.2', 128)
+        fingerprint = sha256(verified.peer.getpeercert(binary_form=True)).hexdigest()
+        assert fingerprint == sha256(cert_der).hexdigest()
+        assert f'i30 CE TLS loaded leaf SHA-256: {fingerprint}' in good['debug'], good
+        assert f'i30 CE TLS sent leaf SHA-256: {fingerprint}' in good['debug'], good
+        for stage in ('handshake message received: 2', 'handshake message received: 11',
+                      'handshake message received: 13', 'handshake message sent: 15',
+                      'ChangeCipherSpec received.', 'negotiated version (decimal): 771'):
+            assert f'i30 CE TLS {stage}' in good['debug'], good
+        assert 'i30 CE Android Auto AUTH_COMPLETE sent.' in good['debug'], good
         wrong = TlsUsbClient(path, dict(files, **{'i30-peer.txt': b'other.invalid'}), context)
         denied = wrong.attach()
         assert not wrong.authenticated and denied['debug'][-2:] == [
             'i30 CE TLS BearSSL error: 56', 'i30 CE TLS phone certificate hostname does not match.'], denied
         report = {'projection_without_credentials': missing_status,
                   'mutual_tls': good['debug'][-1], 'negotiated_cipher': reference_cipher,
+                  'loaded_and_sent_leaf_fingerprint': 'matches certificate independently received by TLS peer',
                   'media_channels': len(verified.services.channels),
                   'graceful_close': verified.closed_gracefully, 'wrong_hostname': denied['debug'][-2:]}
         fragmented = TlsUsbClient(path, files, context, handshake_reply=fragmented_tls_reply)
@@ -601,6 +638,16 @@ def test_tls(path, openssl, exercise_projection=False):
         assert result['debug'][-1] == 'i30 CE TLS phone rejected the head unit certificate chain (unknown CA).', result
         report['client_chain'] = 'A TLS peer requiring the intermediate accepted the full PEM chain and rejected the leaf alone'
 
+        leaf_der = ssl.PEM_cert_to_DER_cert(leaf.read_text(encoding='ascii'))
+        damaged_leaf = ssl.DER_cert_to_PEM_cert(leaf_der[:-1] + bytes((leaf_der[-1] ^ 1,))).encode('ascii')
+        for broken_chain in (leaf.read_bytes() + cert.read_bytes() + intermediate.read_bytes(),
+                             damaged_leaf + intermediate.read_bytes()):
+            guest = TlsUsbClient(path, dict(chain_files, **{'i30-client.pem': broken_chain}), context)
+            result = guest.attach()
+            assert result['debug'][-1] == 'i30 CE TLS head unit certificate chain invalid.', result
+            assert not guest.authenticated and 'i30 CE TLS ClientHello sent.' not in result['debug'], result
+        report['bad_client_chain'] = 'Misordered issuer and altered leaf signature rejected before ClientHello'
+
         clock_errors = (
             (-11644473600, 'guest UTC unavailable or invalid'),
             (verified.clock - 86400, 'head unit certificate is not yet valid at guest UTC'),
@@ -615,9 +662,38 @@ def test_tls(path, openssl, exercise_projection=False):
         bad_pem = dict(pem_files, **{'i30-client.pem': pem + b'-----BEGIN CERTIFICATE-----\nQUJD\n'})
         result = TlsUsbClient(path, bad_pem, context).attach()
         assert result['debug'][-1] == 'i30 CE TLS head unit certificate missing, unreadable or invalid.', result
+        for overrides, reason in (({}, 'missing'), ({'i30-client.der': None, 'i30-client.pem': pem}, 'unreadable'),
+                                  ({'i30-client.der': b'broken', 'i30-client.pem': pem}, 'format invalid')):
+            bad_files = dict(pem_files)
+            del bad_files['i30-client.pem']
+            result = TlsUsbClient(path, dict(bad_files, **overrides), context).attach()
+            assert reason in result['debug'][-2], result
+            assert 'i30 CE TLS ClientHello sent.' not in result['debug'], result
+        report['invalid_identity_files'] = 'Missing or malformed enrollment rejected without sending an alternate identity'
+
+        start = (0x17, b'491231235959Z')
+        end = (0x18, b'20500101000000Z')
+        midnight = int(datetime(2050, 1, 1, tzinfo=timezone.utc).timestamp())
+        for fields, clock, reason in (
+                (((0x17, b'491231165959-0700'), end), midnight, 'certificate decoder result: 48'),
+                (((0x17, b'490231235959Z'), end), midnight, 'certificate decoder result: 48'),
+                ((start, end), midnight - 2, 'certificate is not yet valid'),
+                ((start, end), midnight - 1, 'ClientHello sent.'),
+                ((start, end), midnight, 'ClientHello sent.'),
+                ((start, end), midnight + 1, 'certificate expired')):
+            fixture = replace_test_validity(cert_der, *fields)
+            guest = TlsUsbClient(path, dict(files, **{'i30-client.der': fixture}), context, clock=clock, silent=True)
+            result = guest.attach()
+            assert any(reason in entry for entry in result['debug']), result
+            assert ('i30 CE TLS ClientHello sent.' in result['debug']) == (reason == 'ClientHello sent.'), result
+            assert not guest.authenticated, result
+        report['der_validity'] = 'Offset and impossible date rejected; both UTC endpoints accepted across 2049/2050 midnight'
+
         quiet = TlsUsbClient(path, files, context, silent=True)
         result = quiet.attach()
         assert result['debug'][-1] == 'i30 CE TLS USB read interrupted while waiting for the phone.', result
+        assert 'i30 CE USB transfer timed out.' in result['debug'], result
+        assert 'i30 CE Android Auto AUTH_COMPLETE sent.' not in result['debug'], result
         report['silent_phone'] = result['debug'][-1]
         incompatible = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         incompatible.load_cert_chain(cert, key)
