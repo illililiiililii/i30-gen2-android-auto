@@ -83,6 +83,11 @@ typedef struct UsbLink {
     CE_HANDLE stop, input, output, video;
     uint32_t start;
     unsigned offset, used, read_size, timeout;
+#ifdef I30_NATIVE_TLS
+    I30ReadPoll poll;
+    void *poll_context;
+    int resident;
+#endif
     uint8_t staged[512];
 } UsbLink;
 
@@ -141,7 +146,7 @@ static void transfer_error(uint32_t code)
     OutputDebugStringW(line);
 }
 
-static int finish(UsbLink *link, CE_HANDLE transfer, unsigned capacity)
+static int finish(UsbLink *link, CE_HANDLE transfer, unsigned capacity, int reading)
 {
     uint32_t length = 0, error = 1;
     int result = -1, completed = 0;
@@ -162,6 +167,14 @@ static int finish(UsbLink *link, CE_HANDLE transfer, unsigned capacity)
                 result = (int)length;
             break;
         }
+#ifdef I30_NATIVE_TLS
+        if (reading && link->poll && !link->poll(link->poll_context)) {
+            OutputDebugStringW(L"i30 CE USB receive interrupted by projection output failure.\r\n");
+            break;
+        }
+#else
+        (void)reading;
+#endif
         Sleep(10);
     }
     /* Stock CloseTransfer aborts unfinished transfers before releasing the handle. */
@@ -183,7 +196,7 @@ static int control(UsbLink *link, CE_HANDLE device, uint8_t code, uint16_t index
         return 0;
     transfer = link->api->vendor_transfer(device, 0, 0,
                USB_NO_WAIT | (code == 51 ? USB_IN : 0U), &request, data, 0);
-    return finish(link, transfer, size) == (int)size;
+    return finish(link, transfer, size, 0) == (int)size;
 }
 
 static int start_accessory(UsbLink *link, CE_HANDLE device)
@@ -219,7 +232,7 @@ static int write_link(void *opaque, const uint8_t *data, unsigned size)
     for (i = 0; i < size; ++i)
         request[i] = data[i];
     return finish(link, link->api->bulk_transfer(link->output, 0, 0, USB_NO_WAIT,
-                  size, request, 0), size);
+                  size, request, 0), size, 0);
 }
 
 static int read_link(void *opaque, uint8_t *data, unsigned capacity)
@@ -238,8 +251,21 @@ static int read_link(void *opaque, uint8_t *data, unsigned capacity)
         unsigned flags = USB_IN | USB_NO_WAIT;
         if (link->read_size != AA_VERSION_FRAME)
             flags |= USB_SHORT_TRANSFER_OK;
-        length = finish(link, link->api->bulk_transfer(link->input, 0, 0, flags, link->read_size,
-                                                      link->staged, 0), link->read_size);
+        do {
+            length = finish(link, link->api->bulk_transfer(link->input, 0, 0, flags, link->read_size,
+                                                          link->staged, 0), link->read_size, 1);
+#ifdef I30_NATIVE_TLS
+            if (length == 0 && link->resident) {
+                if ((link->poll && !link->poll(link->poll_context)) || !transfer_allowed(link))
+                    break;
+                Sleep(1); /* A successful zero-length USB packet carries no stream data. */
+                continue;
+            }
+            if (length > 0 && link->resident)
+                link->start = GetTickCount();
+#endif
+            break;
+        } while (transfer_allowed(link));
         if (length <= 0)
             return -1;
         link->offset = 0;
@@ -261,9 +287,17 @@ static void start_video(void *opaque)
     link->video = session_event(I30_AA_VIDEO_ACTIVE);
     if (link->video)
         SetEvent(link->video);
-    /* Keep this attach-based driver within the manual launcher's 35-second wait. */
+    link->resident = link->video != 0;
+    /* The resident projection gets an idle deadline. Manual tests remain bounded. */
     link->start = GetTickCount();
     link->timeout = USB_VIDEO_MS;
+}
+
+static void poll_read(void *opaque, I30ReadPoll poll, void *context)
+{
+    UsbLink *link = opaque;
+    link->poll = poll;
+    link->poll_context = context;
 }
 
 static int write_tls(void *opaque, const uint8_t *data, unsigned size)
@@ -278,7 +312,7 @@ static int write_tls(void *opaque, const uint8_t *data, unsigned size)
         for (unsigned i = 0; i < count; ++i)
             packet[i] = data[sent + i];
         if (finish(link, link->api->bulk_transfer(link->output, 0, 0, USB_NO_WAIT,
-                                                 count, packet, 0), count) != (int)count)
+                                                 count, packet, 0), count, 0) != (int)count)
             return -1;
         sent += count;
     }
@@ -295,7 +329,7 @@ static int negotiate(UsbLink *link, CE_HANDLE device, const UsbInterface *interf
     unsigned i;
     uint16_t minor = 0;
     int success = 0;
-    I30Link wire = {link, read_link, write_link};
+    I30Link wire = {link, read_link, write_link, 0};
     if (!interface || interface->size != sizeof(*interface) || interface->descriptor[0] != 9U ||
         interface->descriptor[1] != 4U || interface->descriptor[2] != 0U ||
         interface->descriptor[3] != 0U || interface->descriptor[4] != 2U ||
@@ -327,6 +361,7 @@ static int negotiate(UsbLink *link, CE_HANDLE device, const UsbInterface *interf
                 link->read_size = sizeof(link->staged);
                 link->video = 0;
                 wire.write = write_tls;
+                wire.poll_read = poll_read;
                 if (i30_ce_authenticate(&wire, start_video))
                     signal_status(I30_AA_AUTH_REQUIRED);
                 if (link->video) {
@@ -387,6 +422,10 @@ int USBDeviceAttach(CE_HANDLE device, const UsbFunctions *api, const UsbInterfac
     link.timeout = USB_VERSION_MS;
     link.read_size = AA_VERSION_FRAME;
     link.offset = link.used = 0;
+#ifdef I30_NATIVE_TLS
+    link.poll = 0;
+    link.resident = 0;
+#endif
     if (running(link.stop) && vendor == I30_SAMSUNG && product == I30_SAMSUNG_MTP &&
         !interface && no_storage(info)) {
         success = start_accessory(&link, device);

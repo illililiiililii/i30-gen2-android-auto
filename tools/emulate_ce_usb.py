@@ -3,6 +3,7 @@
 import argparse
 from collections import Counter
 from datetime import datetime, timezone
+from fractions import Fraction
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -11,7 +12,7 @@ import ssl
 import struct
 import subprocess
 import sys
-from time import time
+from time import monotonic, process_time, time
 
 import pefile
 from unicorn import UC_ARCH_ARM, UC_HOOK_CODE, UC_MODE_ARM, Uc
@@ -38,7 +39,7 @@ class Machine:
         self.cpu.mem_write(self.base, image)
         self.cpu.mem_map(STUB, 0x1000)
         self.cpu.mem_map(RAM, 0x10000)
-        self.cpu.hook_add(UC_HOOK_CODE, self.dispatch, begin=STUB, end=MARK - 4)
+        self.dispatch_hook = self.cpu.hook_add(UC_HOOK_CODE, self.dispatch, begin=STUB, end=MARK - 4)
         self.hooks = {}
         self.calls = Counter()
         rom = json.loads(FORMAT.read_text(encoding='utf-8'))['modules']['coredll.dll']['exports']
@@ -218,6 +219,8 @@ class UsbClient(Machine):
         assert not callback and not context and not pa
         if flag & 0x80:
             assert pipe == 0x81 and size == 12
+            if self.case == 'version-disconnect':
+                return 0
             frame = bytes.fromhex('00 03 00 08 00 02 00 01 00 07 00 00')
             self.cpu.mem_write(data, frame)
         else:
@@ -313,31 +316,7 @@ class TlsUsbClient(UsbClient):
     def dispatch_frame(self, channel, flags, payload):
         if flags & 8:
             self.inbox.write(payload)
-            message = self.peer.read(0x4000)
-            if channel == 3:
-                assert self.video
-                self.video_reply(flags, message)
-                return
-            if message.startswith(b'\x00\x06'):
-                from i30_receiver import schema
-                self.services = schema.parse(schema.CTL + 'ServiceDiscoveryResponse', message[2:])
-                if self.video:
-                    assert len(self.services.channels) == 1 and self.services.channels[0].id == 3
-                    self.service_frame(b'\x00\x12\x08\x01')
-            elif message == b'\x00\x13\x08\x03\x10\x00':
-                assert self.video
-                self.audio_focus_denied = True
-                self.service_frame(b'\x00\x11\x08\x01')  # Optional voice notification without a microphone channel.
-                self.service_frame(b'\x00\x07\x08\x00\x10\x03', 3, 4)
-            elif message == b'\x00\x10':
-                assert self.video
-                self.closed_gracefully = True
-            elif message == b'\x00\x0c\x08\x7b':
-                self.pongs += 1
-            else:
-                assert message == b'\x00\x0f\x08\x01'
-                self.service_frame(b'\x00\x10')
-                self.closed_gracefully = True
+            self.dispatch_secure(channel, flags, self.peer.read(0x4000))
             return
         code, = struct.unpack_from('>H', payload)
         if code == 4:
@@ -363,6 +342,31 @@ class TlsUsbClient(UsbClient):
                 self.pending.extend(self.handshake_reply(outgoing))
             else:
                 self.pending.extend(struct.pack('>BBHH', 0, 3, 2 + len(outgoing), 3) + outgoing)
+
+    def dispatch_secure(self, channel, flags, message):
+        if channel == 3:
+            assert self.video
+            self.video_reply(flags, message)
+        elif message.startswith(b'\x00\x06'):
+            from i30_receiver import schema
+            self.services = schema.parse(schema.CTL + 'ServiceDiscoveryResponse', message[2:])
+            if self.video:
+                assert len(self.services.channels) == 1 and self.services.channels[0].id == 3
+                self.service_frame(b'\x00\x12\x08\x01')
+        elif message == b'\x00\x13\x08\x03\x10\x00':
+            assert self.video
+            self.audio_focus_denied = True
+            self.service_frame(b'\x00\x11\x08\x01')  # Optional voice notification without a microphone channel.
+            self.service_frame(b'\x00\x07\x08\x00\x10\x03', 3, 4)
+        elif message == b'\x00\x10':
+            assert self.video
+            self.closed_gracefully = True
+        elif message == b'\x00\x0c\x08\x7b':
+            self.pongs += 1
+        else:
+            assert message == b'\x00\x0f\x08\x01'
+            self.service_frame(b'\x00\x10')
+            self.closed_gracefully = True
 
     def video_reply(self, flags, message):
         code, = struct.unpack_from('>H', message)
@@ -491,9 +495,12 @@ class TlsUsbClient(UsbClient):
         _, _, _, _, _, bits, bitmap = struct.unpack('<7I', self.cpu.mem_read(sp, 28))
         assert struct.unpack('<IiiHH', self.cpu.mem_read(bitmap, 16)) == (40, 800, -480, 1, 32)
         blue, green, red, _ = self.cpu.mem_read(bits + 4 * (400 + 240 * 800), 4)
-        assert red > 210 and blue < 35 and green < 35
+        self.check_pixel(red, green, blue)
         self.projected += 1
         return 1
+
+    def check_pixel(self, red, green, blue):
+        assert red > 210 and blue < 35 and green < 35
 
     def CeGenRandom(self, size, output, *_):
         self.cpu.mem_write(output, bytes(range(size)))  # Reproducible test inputs only.
@@ -523,7 +530,7 @@ class TlsUsbClient(UsbClient):
         self.received.extend(self.cpu.mem_read(data, size))
         while len(self.received) >= 6:
             channel, flags, length = struct.unpack_from('>BBH', self.received)
-            assert channel in (0, 3) and flags in (3, 11, 15)
+            assert channel in (0, 1, 3) and flags in (3, 11, 15)
             end = length + 4
             if len(self.received) < end:
                 break
@@ -531,6 +538,275 @@ class TlsUsbClient(UsbClient):
             del self.received[:end]
             self.dispatch_frame(channel, flags, payload)
         return self.issue(size)
+
+
+class NativeUsbStress(TlsUsbClient):
+    """ARM API doubles for a resident window, single-pointer IPC and repeated close paths."""
+
+    timeout_us = 60_000_000
+    instruction_limit = 350_000_000
+    gesture = ((0, 0, 0), (2, 400, 240), (2, 799, 479), (1, 799, 479), (0, 20, 20), (1, 20, 20))
+
+    def __init__(self, path, files, context, frames, *, fps=15, soak=False, failure=None, restart=False,
+                 empty_receive=None, motion=False):
+        super().__init__(path, files, context, video=frames[0])
+        self.events[9] = 'VideoActive'
+        self.frames, self.fps, self.soak, self.failure = frames, fps, soak, failure
+        self.restart = restart
+        self.empty_receive = empty_receive
+        self.motion = motion
+        self.pixel_samples = set()
+        self.waiting_read = None
+        self.empty_reads = 0
+        self.tested_ipc_timeout = False
+        self.gesture_index = 0
+        self.touch_reports = []
+        self.input_bound = False
+        self.video_active = False
+        self.touch_armed = False
+        self.dropped = False
+        self.camera_active = False
+        self.peak_bytes = 0
+        self.frame_times = []
+        self.started_video = 0
+        self.long_checkpoints = []
+        self.goodbye_sent = False
+        self.on_frame = None
+
+    def reconnect(self, context):
+        assert not (self.allocations or self.pipes or self.transfers or self.video_active or self.touch_armed)
+        # Preserve the ARM image, address space and guest clock across connects.
+        self.inbox, self.outbox = ssl.MemoryBIO(), ssl.MemoryBIO()
+        self.peer = context.wrap_bio(self.inbox, self.outbox, server_side=True)
+        for queue in (self.pending, self.received, self.signaled, self.debug, self.wire_writes,
+                      self.touch_reports, self.frame_times):
+            queue.clear()
+        self.gesture_index = self.projected = self.video_acks = self.peak_bytes = 0
+        self.services = self.peer_error = None
+        self.authenticated = self.closed_gracefully = self.input_bound = self.goodbye_sent = False
+
+    def allocate(self, size, wipe=False):
+        handle = super().allocate(size, wipe)
+        self.peak_bytes = max(self.peak_bytes, sum(item[0] for item in self.allocations.values()))
+        return handle
+
+    def check_pixel(self, red, green, blue):
+        if self.motion:
+            self.pixel_samples.add((red, green, blue))
+        else:
+            super().check_pixel(red, green, blue)
+
+    def CreateEventW(self, attrs, manual, initial, name, *_):
+        label = self.text(name)
+        if label == 'I30.GD13MY.061.StockDisplay.Safe.1':
+            self.event_error = 183
+            return 21
+        if label == 'I30.GD13MY.061.StockCamera.Active.1':
+            self.event_error = 183
+            return 22
+        return super().CreateEventW(attrs, manual, initial, name)
+
+    def EventModify(self, handle, operation, *_):
+        if handle == 9:
+            assert operation in (2, 3)
+            self.video_active = operation == 3
+            return 1
+        return super().EventModify(handle, operation)
+
+    def WaitForSingleObject(self, handle, milliseconds, *_):
+        if handle in (21, 22):
+            return 0 if handle == 21 or self.camera_active else 258
+        return super().WaitForSingleObject(handle, milliseconds)
+
+    def FindWindowW(self, name, title, *_):
+        assert name and not title and self.text(name) == 'I30.GD13MY.NavigationProjection.1'
+        return 0x9000
+
+    def GetWindow(self, window, command, *_):
+        assert window == 0x9000 and command in (2, 4)
+        return 0x9001
+
+    def IsWindowVisible(self, window, *_):
+        assert window in (0x9000, 0x9001)
+        return 1
+
+    def GetWindowLongW(self, window, index, *_):
+        assert window in (0x9000, 0x9001) and index == 0xffffffec
+        return 0
+
+    def GetClientRect(self, window, rect, *_):
+        assert window == 0x9000
+        self.cpu.mem_write(rect, struct.pack('<iiii', 0, 0, 800, 480))
+        return 1
+
+    def GetDCEx(self, window, region, options, *_):
+        assert (window, region, options) == (0x9000, 0, 0x12)
+        return 11
+
+    def GetClipBox(self, dc, rect, *_):
+        assert dc == 11
+        return 2
+
+    def SendMessageTimeout(self, window, code, request, detail, flags, timeout, result, *_):
+        assert (window, code, detail, flags, timeout) == (0x9000, 0x8002, 0, 0, 100)
+        sample = 1
+        if request == 1:
+            self.touch_armed = True
+        elif request == 2:
+            self.touch_armed = False
+        else:
+            assert self.touch_armed
+            sample = 0
+            if self.empty_receive == 'pending' and self.gesture_index == 1 and not self.tested_ipc_timeout:
+                self.tested_ipc_timeout = True
+                self.ms += timeout
+                return 0
+            if self.projected and self.gesture_index < len(self.gesture):
+                action, x, y = self.gesture[self.gesture_index]
+                self.gesture_index += 1
+                sample = (action + 2) << 19 | y << 10 | x
+                self.ms += 21
+        self.put(result, sample)
+        return 1
+
+    def dispatch_frame(self, channel, flags, payload):
+        if not flags & 8:
+            if (self.failure == 'tls' and payload[:2] == b'\x00\x03' or
+                    self.failure == 'auth-complete' and payload[:2] == b'\x00\x04'):
+                self.disconnect()
+                return
+        return super().dispatch_frame(channel, flags, payload)
+
+    def dispatch_secure(self, channel, flags, message):
+        from i30_receiver import schema
+        from i30_receiver.protocol import INPUT, input_code
+        code = int.from_bytes(message[:2], 'big')
+        if channel == 1:
+            if code == 8 and message[2:] == b'\x08\x00':
+                self.service_frame(b'\x80\x02', 1)
+            elif code == input_code('KEY_BINDING_RESPONSE') and message[2:] == b'\x08\x00':
+                self.input_bound = True
+            else:
+                assert code == input_code('INPUT_REPORT') and self.input_bound
+                report = schema.parse(INPUT + 'message.InputReport', message[2:])
+                event = report.touch_event
+                point, = event.pointer_data
+                assert not point.pointer_id and not event.action_index
+                assert not self.touch_reports or report.timestamp > self.touch_reports[-1][3]
+                self.touch_reports.append((event.action, point.x, point.y, report.timestamp))
+                if self.failure == 'touch':
+                    self.disconnect()
+                elif not self.soak and self.video_acks == len(self.frames) and len(self.touch_reports) == len(self.gesture):
+                    self.end_video()
+        elif message.startswith(b'\x00\x06'):
+            self.services = schema.parse(schema.CTL + 'ServiceDiscoveryResponse', message[2:])
+            assert [item.id for item in self.services.channels] == [3, 1]
+            touch = self.services.channels[1].input_source_service
+            assert [(entry.width, entry.height) for entry in touch.touchscreen] == [(800, 480)]
+            assert not touch.keycodes_supported
+            self.service_frame(b'\x00\x07\x08\x00\x10\x01', 1, 4)
+            self.service_frame(b'\x00\x12\x08\x01')
+        elif message == b'\x00\x0c\x08\x7b' and self.soak:
+            self.pongs += 1
+            if self.pongs in (6, 30, 90, 180):
+                self.long_checkpoints.append(self.pongs * 10)
+                self.frame_times.append(monotonic())
+                self.service_frame(bytes(10) + self.frames[0], 3)
+            else:
+                self.advance_soak()
+        else:
+            super().dispatch_secure(channel, flags, message)
+
+    def disconnect(self):
+        self.pending.clear()
+        self.dropped = True
+
+    def bulk(self, pipe, callback, context, flag, size, data, pa):
+        if self.dropped:
+            return 0
+        if flag & 0x80 and self.video_active and not self.pending and self.empty_receive:
+            transfer = self.issue(0)
+            self.empty_reads += 1
+            if self.empty_receive == 'pending':
+                self.waiting_read = transfer, data, size
+            return transfer
+        return super().bulk(pipe, callback, context, flag, size, data, pa)
+
+    def complete(self, transfer, *_):
+        if self.waiting_read and transfer == self.waiting_read[0]:
+            if not self.pending:
+                return 0
+            _, destination, size = self.waiting_read
+            packet = bytes(self.pending[:size])
+            del self.pending[:size]
+            self.cpu.mem_write(destination, packet)
+            self.transfers[transfer] = len(packet)
+            self.waiting_read = None
+        return super().complete(transfer)
+
+    def advance_soak(self):
+        if self.pongs == 180:
+            self.end_video()
+            return
+        self.ms += 10_000
+        self.service_frame(b'\x00\x0b\x08\x7b')
+
+    def end_video(self):
+        if not self.goodbye_sent:
+            self.goodbye_sent = True
+            self.service_frame(b'\x00\x0f\x08\x01')
+
+    def send_video(self, index):
+        data = self.frames[index]
+        if self.motion:
+            from i30_receiver.wire import ENCRYPTED, Message, encode
+
+            def encrypt(plaintext):
+                assert self.peer.write(plaintext) == len(plaintext)
+                return self.outbox.read()
+
+            for frame in encode(Message(3, ENCRYPTED, 0, bytes(8) + data), encrypt, fragment_size=8192):
+                self.pending.extend(frame)
+        else:
+            self.service_frame(bytes(10) + data, 3, fragment=11 if not index else None)
+
+    def video_reply(self, flags, message):
+        code = int.from_bytes(message[:2], 'big')
+        if code == 0x8008:
+            if message[3] == 2 and self.camera_active:
+                self.disconnect()
+                return
+            self.started_video = self.ms
+            self.frame_times.append(monotonic())
+            self.send_video(0)
+            if self.failure == 'fragment':
+                del self.pending[80:]
+        elif code == 0x8004:
+            self.video_acks += 1
+            self.frame_times[-1] = 1000 * (monotonic() - self.frame_times[-1])
+            if self.on_frame is not None:
+                self.on_frame(self.video_acks)
+            if self.failure == 'reverse':
+                self.camera_active = True
+                self.service_frame(b'\x00\x0b\x08\x7b')
+            elif self.soak:
+                self.advance_soak()
+            elif self.restart and self.video_acks == 1:
+                self.service_frame(b'\x80\x02', 3)
+                self.service_frame(b'\x80\x00\x08\x03', 3)
+            elif self.video_acks < len(self.frames):
+                self.ms += (self.video_acks * 1000 // self.fps - (self.video_acks - 1) * 1000 // self.fps)
+                self.frame_times.append(monotonic())
+                self.send_video(self.video_acks)
+            else:
+                # Give the bidirectional input pump a new read boundary even for a short clip.
+                self.ms += 21
+                if len(self.touch_reports) == len(self.gesture):
+                    self.end_video()
+                elif not self.empty_receive:
+                    self.service_frame(b'\x00\x0b\x08\x7b')
+        else:
+            super().video_reply(flags, message)
 
 
 def issue_test_certificate(openssl, base, issuer, issuer_key, name, extensions):
@@ -1000,15 +1276,274 @@ class Settings(Machine):
         return 'Default off, setting and clearing the boot flag, and inline USB test verified'
 
 
+def stress_frames(fps, count=8, width=800, motion=False):
+    import av
+    codec = av.CodecContext.create('libx264', 'w')
+    codec.width, codec.height, codec.pix_fmt = width, 480, 'yuv420p'
+    codec.time_base = Fraction(1, fps)
+    codec.options = {'preset': 'ultrafast', 'tune': 'zerolatency', 'profile': 'baseline',
+                     'g': str(4 if count <= 8 else fps), 'sc_threshold': '0'}
+    if motion:
+        codec.bit_rate = {15: 384_000, 24: 768_000, 30: 1_500_000}[fps]
+        graph = av.filter.Graph()
+        source = graph.add('testsrc2', f'size={width}x480:rate={fps}')
+        sink = graph.add('buffersink')
+        source.link_to(sink)
+        graph.configure()
+    packets = []
+    for index in range(count):
+        if motion:
+            frame = sink.pull()
+        else:
+            frame = av.VideoFrame(width, 480, 'yuv420p')
+            frame.pts = index
+            for plane, value in zip(frame.planes, (81, 90, 240)):
+                plane.update(bytes([value]) * plane.buffer_size)
+            luma = memoryview(frame.planes[0])
+            for row in range(16, 112):
+                offset = row * frame.planes[0].line_size + index * 17 % (width - 64)
+                luma[offset:offset + 64] = b'\xeb' * 64
+        packet, = codec.encode(frame)
+        packets.append((bytes(packet), packet.is_keyframe))
+    return packets
+
+
+def test_stress(path, openssl, rounds):
+    sys.path.insert(0, str(FORMAT.parents[2] / 'src'))
+    from i30_receiver.mock import test_identity
+
+    with test_identity(openssl) as (cert, key, peer):
+        files = {'i30-ca.pem': cert.read_bytes(), 'i30-peer.txt': b'i30-mock.local',
+                 'i30-client.pem': cert.read_bytes(), 'i30-client-key.pem': key.read_bytes()}
+        streams = []
+        one_frame = None
+        for fps in (15, 24, 30):
+            packets = stress_frames(fps)
+            frames = [item[0] for item in packets]
+            one_frame = frames[:1]
+            guest = NativeUsbStress(path, files, peer, frames, fps=fps)
+            result = guest.attach()
+            assert guest.authenticated and guest.closed_gracefully and guest.input_bound, result
+            assert guest.projected == guest.video_acks == len(frames), result
+            assert [event[:3] for event in guest.touch_reports] == list(guest.gesture), result
+            assert not guest.allocations and not guest.video_active and not guest.touch_armed, result
+            streams.append({'nominal_fps': fps, 'sent': len(frames), 'acked': guest.video_acks,
+                            'painted': guest.projected, 'keyframes': sum(item[1] for item in packets),
+                            'bytes': sum(map(len, frames)), 'peak_guest_requested_bytes': guest.peak_bytes,
+                            'frame_ack_wall_ms': guest.frame_times, 'touches': guest.touch_reports})
+
+        keepalive = NativeUsbStress(path, files, peer, one_frame, soak=True)
+        result = keepalive.attach()
+        assert keepalive.closed_gracefully and keepalive.pongs == 180, result
+        assert keepalive.projected == keepalive.video_acks == 5 and not keepalive.allocations, result
+        assert keepalive.long_checkpoints == [60, 300, 900, 1800], result
+
+        abrupt = {}
+        for failure in ('tls', 'auth-complete', 'fragment', 'touch', 'reverse'):
+            guest = NativeUsbStress(path, files, peer, one_frame, failure=failure)
+            result = guest.attach()
+            assert not guest.closed_gracefully and not guest.allocations and not guest.video_active and not guest.touch_armed, result
+            assert guest.projected == (failure in ('touch', 'reverse')), result
+            abrupt[failure] = {'painted': guest.projected, 'touch_reports': len(guest.touch_reports),
+                               'cleared_allocations': len(guest.allocations), 'transfers_closed': result['closed_transfers']}
+
+        oversize = NativeUsbStress(path, files, peer, [stress_frames(15, 1, width=816)[0][0]])
+        result = oversize.attach()
+        assert oversize.authenticated and not oversize.projected and not oversize.closed_gracefully, result
+        assert not oversize.allocations and not oversize.video_active, result
+        restarted = NativeUsbStress(path, files, peer, one_frame * 2, restart=True)
+        result = restarted.attach()
+        assert restarted.closed_gracefully and restarted.projected == restarted.video_acks == 2, result
+        assert not restarted.allocations and not restarted.video_active, result
+
+        idle_input = {}
+        for mode in ('pending', 'zlp'):
+            guest = NativeUsbStress(path, files, peer, one_frame, empty_receive=mode)
+            result = guest.attach()
+            assert guest.closed_gracefully and guest.empty_reads and not guest.allocations, result
+            assert [event[:3] for event in guest.touch_reports] == list(guest.gesture), result
+            idle_input[mode] = {'touch_reports': len(guest.touch_reports), 'usb_reads': guest.empty_reads,
+                                'transient_ui_timeout': guest.tested_ipc_timeout}
+
+        peak = set()
+        milestones = []
+        guest = NativeUsbStress(path, files, peer, one_frame)
+        for index in range(1, rounds + 1):
+            if index > 1:
+                guest.reconnect(peer)
+            result = guest.attach()
+            assert guest.closed_gracefully and guest.video_acks == guest.projected == 1, result
+            assert [event[:3] for event in guest.touch_reports] == list(guest.gesture), result
+            assert not guest.allocations and not guest.video_active and not guest.touch_armed, result
+            peak.add(guest.peak_bytes)
+            if index in (5, 10, 30) or index == rounds:
+                milestones.append(index)
+        guest.cpu.hook_del(guest.dispatch_hook)
+        return {'streams': streams, 'resident_virtual_seconds': keepalive.long_checkpoints,
+                'resident_pongs': keepalive.pongs, 'resident_painted_frames': keepalive.projected,
+                'abrupt_cleanup': abrupt, 'video_oversize_rejected': True, 'video_restart_painted_frames': 2,
+                'input_while_phone_idle': idle_input,
+                'completed_session_checkpoints': milestones,
+                'peak_requested_bytes_across_attaches': sorted(peak), 'live_allocations_after_each_attach': 0}
+
+
+def arm_video_profile(guest, path):
+    abi = json.loads(path.with_name('abi.json').read_text(encoding='utf-8'))[path.name]
+    assert sha256(path.read_bytes()).hexdigest() == abi['sha256']
+    labels = {'h264bsdDecode': 'decode', 'h264bsdNextOutputPictureBGRA': 'bgra_conversion'}
+    started = {}
+    returns = {}
+    per_frame = []
+    cpu = guest.cpu
+
+    def finish(_cpu, address, _size, _data):
+        entry = started.pop(address, None)
+        if entry is None:
+            return
+        label, began = entry
+        while len(per_frame) <= guest.video_acks:
+            per_frame.append({'decode_ms': 0.0, 'bgra_conversion_ms': 0.0})
+        per_frame[guest.video_acks][label + '_ms'] += 1000 * (monotonic() - began)
+
+    def begin(driver, _address, _size, label):
+        address = driver.reg_read(UC_ARM_REG_LR) & ~1
+        if address not in returns:
+            returns[address] = driver.hook_add(UC_HOOK_CODE, finish, begin=address, end=address)
+            driver.ctl_flush_tb()
+        started[address] = label, monotonic()
+
+    for name, label in labels.items():
+        address = guest.base + abi['video_profile_rvas'][name]
+        cpu.hook_add(UC_HOOK_CODE, begin, label, begin=address, end=address)
+    return per_frame
+
+
+def test_continuous(path, openssl, seconds, fps, progress, motion, profile):
+    sys.path.insert(0, str(FORMAT.parents[2] / 'src'))
+    from i30_receiver.mock import test_identity
+
+    packets = stress_frames(fps, count=seconds * fps, motion=motion)
+    frames = [packet for packet, _ in packets]
+    with test_identity(openssl) as (cert, key, peer):
+        files = {'i30-ca.pem': cert.read_bytes(), 'i30-peer.txt': b'i30-mock.local',
+                 'i30-client.pem': cert.read_bytes(), 'i30-client-key.pem': key.read_bytes()}
+        guest = NativeUsbStress(path, files, peer, frames, fps=fps, motion=motion)
+        # This is a bounded bench execution budget. Guest time is advanced by the sender cadence.
+        guest.timeout_us = max(60_000_000, len(frames) * 1_200_000)
+        guest.instruction_limit = 0
+        counters = arm_video_profile(guest, path) if profile else []
+        wall, cpu = monotonic(), process_time()
+        if progress is not None:
+            checkpoints = {fps * minutes * 60 for minutes in (1, 5, 15, 30)}
+
+            def record(count):
+                if count in checkpoints:
+                    assert guest.projected == count
+                    status = {'frames': count, 'guest_ms': guest.ms - guest.started_video,
+                              'host_seconds': round(monotonic() - wall, 3), 'peak_guest_bytes': guest.peak_bytes}
+                    with progress.open('a', encoding='utf-8') as ledger:
+                        print(json.dumps(status), file=ledger)
+
+            guest.on_frame = record
+        result = guest.attach()
+        wall, cpu = monotonic() - wall, process_time() - cpu
+        assert guest.authenticated and guest.closed_gracefully and guest.input_bound, result
+        assert guest.projected == guest.video_acks == len(frames) and not guest.allocations, result
+        assert [event[:3] for event in guest.touch_reports] == list(guest.gesture), result
+        if profile:
+            assert len(counters) == len(frames) and all(frame['decode_ms'] and frame['bgra_conversion_ms']
+                                                       for frame in counters)
+        return {'nominal_stream_seconds': seconds, 'nominal_fps': fps, 'simulated_video_ms': guest.ms - guest.started_video,
+                'sent': len(frames), 'acked': guest.video_acks, 'painted': guest.projected,
+                'keyframes': sum(keyframe for _, keyframe in packets), 'bytes': sum(map(len, frames)),
+                'largest_access_unit_bytes': max(map(len, frames)), 'moving_test_pattern': motion,
+                'center_pixel_colors': len(guest.pixel_samples),
+                'peak_guest_requested_bytes': guest.peak_bytes, 'live_allocations_after_close': len(guest.allocations),
+                'wall_seconds': round(wall, 3), 'host_cpu_seconds': round(cpu, 3),
+                'frame_ack_wall_ms': guest.frame_times, 'arm_function_wall_profile': counters}
+
+
+def test_stock_touch_route(path):
+    from patch_gd13my_settings import THUNKS
+
+    pe = pefile.PE(str(path))
+    base = pe.OPTIONAL_HEADER.ImageBase
+    section = next(section for section in pe.sections if section.Name.rstrip(b'\0') == b'.i30nav')
+    iat, = pe.DIRECTORY_ENTRY_IMPORT[-1].imports
+    results = {}
+    for case, code, module, claimed in (('before-projection', 0x201, 0, 0), ('covered', 0x201, 1, 0),
+                                        ('down', 0x201, 1, 1), ('move', 0x200, 1, 1), ('up', 0x202, 1, 1),
+                                        ('non-pointer', 0x113, 1, 0)):
+        cpu = Uc(UC_ARCH_ARM, UC_MODE_ARM)
+        image = pe.get_memory_mapped_image()
+        cpu.mem_map(base, (len(image) + 0xfff) & ~0xfff)
+        cpu.mem_write(base, image)
+        cpu.mem_map(RAM, 0x10000)
+        cpu.mem_map(STUB, 0x1000)
+        hwnd, point = 0x1234, 400 | 240 << 16
+        cpu.mem_write(RAM, struct.pack('<IIII', hwnd, code, 0, point))
+        cpu.mem_write(iat.address, struct.pack('<I', STUB))
+        cpu.reg_write(UC_ARM_REG_R0 + 9, RAM)  # ARM sb points to MSG.
+        cpu.reg_write(UC_ARM_REG_R0 + 11, 24)  # Active stock navigation menu shot.
+        cpu.reg_write(UC_ARM_REG_SP, STACK)
+        cpu.reg_write(UC_ARM_REG_LR, MARK)
+        calls = []
+
+        def call(cpu, address, _size, _data):
+            if address in (THUNKS['stock_resume'], THUNKS['stock_consumed']):
+                calls.append('consumed' if address == THUNKS['stock_consumed'] else 'stock')
+                cpu.emu_stop()
+            elif address in (0x2d030c, STUB, STUB + 4):
+                r0, r1, r2 = (cpu.reg_read(UC_ARM_REG_R0 + index) for index in range(3))
+                if address == 0x2d030c:
+                    assert bytes(cpu.mem_read(r0, 22)).decode('utf-16le').rstrip('\0') == 'i30nav.dll'
+                    value = module
+                    calls.append('get-module')
+                elif address == STUB:
+                    assert r0 == module
+                    assert bytes(cpu.mem_read(r1, 48)).decode('utf-16le').rstrip('\0') == 'I30RouteProjectionTouch'
+                    value = STUB + 4
+                    calls.append('resolve')
+                else:
+                    assert (r0, r1, r2) == (hwnd, code, point)
+                    value = claimed
+                    calls.append('route')
+                cpu.reg_write(UC_ARM_REG_R0, value)
+                cpu.reg_write(UC_ARM_REG_PC, cpu.reg_read(UC_ARM_REG_LR))
+
+        code_hook = cpu.hook_add(UC_HOOK_CODE, call)
+        cpu.emu_start(base + section.VirtualAddress, MARK, timeout=1_000_000, count=1000)
+        cpu.hook_del(code_hook)
+        expected = [] if case == 'non-pointer' else ['get-module', 'resolve', 'route'] if module else ['get-module']
+        assert calls == expected + ['consumed' if claimed else 'stock'], (case, calls)
+        assert cpu.reg_read(UC_ARM_REG_R0 + 3) == code
+        assert cpu.reg_read(UC_ARM_REG_SP) == STACK
+        results[case] = calls
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('artifacts', type=Path)
     parser.add_argument('--tls-openssl', type=Path, help='Exercise the native TLS build with an ephemeral test identity')
     parser.add_argument('--projection', action='store_true', help='Run the native USB-to-GDI video and preemption test')
+    parser.add_argument('--stress-rounds', type=int, default=0, help='Repeat full ARM projection and resource cleanup')
+    parser.add_argument('--continuous-seconds', type=int, default=0, help='Run a nominal-length ARM video stream')
+    parser.add_argument('--continuous-fps', type=int, choices=(15, 24, 30), default=15)
+    parser.add_argument('--continuous-progress', type=Path, help='Save nominal video checkpoints as JSON lines')
+    parser.add_argument('--motion-pattern', action='store_true', help='Use a higher-motion libavfilter source')
+    parser.add_argument('--profile-video', action='store_true', help='Time decoder and BGRA functions in the ARM fixture')
+    parser.add_argument('--navigation', type=Path, help='Exercise the stock input trampoline in a patched GDdNavi.exe')
     args = parser.parse_args()
+    if not args.tls_openssl and (args.stress_rounds or args.continuous_seconds):
+        parser.error('ARM stress and continuous video require --tls-openssl')
+    if args.stress_rounds < 0 or args.continuous_seconds < 0:
+        parser.error('Test lengths cannot be negative')
+    if (args.continuous_progress or args.motion_pattern or args.profile_video) and not args.continuous_seconds:
+        parser.error('Video options require --continuous-seconds')
     client = {case: UsbClient(args.artifacts / 'i30usb.dll', case).attach()
               for case in ('switch', 'version', 'not-armed', 'storage', 'unsupported', 'wrong-interface',
-                           'second-pipe-fails', 'timeout')}
+                           'second-pipe-fails', 'timeout', 'version-disconnect')}
     assert client['switch']['accepted'] and client['switch']['controls'] == [51, 52, 52, 52, 52, 53]
     assert client['version']['accepted'] and client['version']['signals'] == ['Ready']
     assert client['version']['inputs'] == ['00030006000100010006']
@@ -1040,6 +1575,14 @@ def main():
               'client': client, 'settings': settings, 'preferences': preferences, 'projection_owner': owners}
     if args.tls_openssl:
         report['native_tls'] = test_tls(args.artifacts / 'i30usb.dll', args.tls_openssl, args.projection)
+    if args.stress_rounds:
+        report['native_stress'] = test_stress(args.artifacts / 'i30usb.dll', args.tls_openssl, args.stress_rounds)
+    if args.continuous_seconds:
+        report['continuous_video'] = test_continuous(args.artifacts / 'i30usb.dll', args.tls_openssl,
+                                                    args.continuous_seconds, args.continuous_fps,
+                                                    args.continuous_progress, args.motion_pattern, args.profile_video)
+    if args.navigation:
+        report['stock_touch_route'] = test_stock_touch_route(args.navigation)
     print(json.dumps(report, indent=2))
 
 

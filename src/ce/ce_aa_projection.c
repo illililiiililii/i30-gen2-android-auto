@@ -9,20 +9,28 @@ int GetClipBox(CE_HANDLE, CeRect *);
 int ReleaseDC(CE_HANDLE, CE_HANDLE);
 void *LocalAlloc(uint32_t, uint32_t);
 void *LocalFree(void *);
+int32_t SendMessageTimeout(CE_HANDLE, unsigned, uint32_t, int32_t, unsigned, unsigned, uint32_t *);
 
 enum { VIDEO_CHANNEL = I30_PROJECTION_VIDEO_CHANNEL, CONTROL = 4, H264_BASELINE = 3 };
 enum { OPEN = 7, CLOSE = 9, PING = 11, GOODBYE = 15, AUDIO_FOCUS_REQUEST = 18 };
 enum { DATA = 0, CODEC = 1, SETUP = 0x8000, START = 0x8001, STOP = 0x8002, FOCUS = 0x8007 };
 enum { PROJECTED = 1, NATIVE = 2, PROJECTED_NO_INPUT = 4 };
 enum VideoState { ADVERTISED, OPENED, CONFIGURED, STREAMING };
+enum { INPUT_CHANNEL = I30_PROJECTION_INPUT_CHANNEL, INPUT_REPORT = 0x8001, KEY_BINDING = 0x8002,
+       KEY_BINDING_RESPONSE = 0x8003, INPUT_FEEDBACK = 0x8004 };
 
 typedef struct Projection {
+    const I30SecureChannel *wire;
     CE_HANDLE window;
     I30Video *decoder;
     enum VideoState state;
     uint32_t session;
     unsigned requested_focus, granted_focus;
     int rendered;
+    int input, input_open, input_bound, touch_enabled, pointer_down;
+    unsigned x, y, touch_timeouts;
+    uint32_t next_poll, last_tick;
+    uint64_t touch_time;
 } Projection;
 
 CE_HANDLE i30_projection_surface(void)
@@ -54,6 +62,16 @@ CE_HANDLE i30_projection_target(void)
         return GetWindow(window, CE_GW_OWNER) ? window : 0;
 #endif
     return i30_projection_surface();
+}
+
+int i30_projection_has_input(CE_HANDLE window)
+{
+#ifdef I30_VIRTUAL_LCD_BENCH
+    (void)window;
+    return 0;
+#else
+    return window && window == FindWindowW(I30_NAVIGATION_PROJECTION_CLASS, 0);
+#endif
 }
 
 static int take_varint(const uint8_t **bytes, unsigned *size, uint32_t *value)
@@ -173,6 +191,134 @@ static int update_focus(const I30SecureChannel *wire, Projection *video, unsigne
     return 1;
 }
 
+static uint8_t *put_varint(uint8_t *out, uint64_t value)
+{
+    while (value >= 128U) {
+        *out++ = (uint8_t)(value | 128U);
+        value >>= 7;
+    }
+    *out++ = (uint8_t)value;
+    return out;
+}
+
+static int send_touch(Projection *video, unsigned action, unsigned x, unsigned y)
+{
+    if (action == I30_TOUCH_DOWN ? video->pointer_down : !video->pointer_down)
+        return 1;
+    uint32_t now = GetTickCount(), elapsed = now - video->last_tick;
+    video->last_tick = now;
+    video->touch_time += elapsed ? (uint64_t)elapsed * 1000U : 1U;
+    uint8_t report[32] = {INPUT_REPORT >> 8, INPUT_REPORT & 255U, 8};
+    uint8_t *length = put_varint(report + 3, video->touch_time);
+    *length++ = 0x1a;
+    uint8_t *pointer = length + 3;
+    length[1] = 0x0a;
+    *pointer++ = 8;
+    pointer = put_varint(pointer, x);
+    *pointer++ = 16;
+    pointer = put_varint(pointer, y);
+    *pointer++ = 24;
+    *pointer++ = 0; /* Single pointer ID. */
+    length[2] = (uint8_t)(pointer - (length + 3));
+    *pointer++ = 16;
+    *pointer++ = 0; /* Action index. */
+    *pointer++ = 24;
+    *pointer++ = (uint8_t)(action - I30_TOUCH_DOWN);
+    *length = (uint8_t)(pointer - (length + 1));
+    if (!video->wire->send(video->wire->context, INPUT_CHANNEL, 0, report, (unsigned)(pointer - report)))
+        return 0;
+    video->pointer_down = action != I30_TOUCH_UP;
+    video->x = x;
+    video->y = y;
+    return 1;
+}
+
+static int touch_window(Projection *video, unsigned request, uint32_t *result)
+{
+    return SendMessageTimeout(video->window, I30_TOUCH_MESSAGE, request, 0, 0, 100, result) != 0;
+}
+
+static int reset_pointer(Projection *video)
+{
+    if (video->touch_enabled) {
+        uint32_t result;
+        touch_window(video, I30_TOUCH_DISABLE, &result);
+        video->touch_enabled = 0;
+    }
+    video->touch_timeouts = 0;
+    return send_touch(video, I30_TOUCH_UP, video->x, video->y);
+}
+
+static int poll_touch(void *opaque)
+{
+    Projection *video = opaque;
+    if (!video->input_bound)
+        return 1;
+    if (video->state != STREAMING || video->granted_focus != PROJECTED)
+        return reset_pointer(video);
+    uint32_t now = GetTickCount(), sample;
+    if ((int32_t)(now - video->next_poll) < 0)
+        return 1;
+    video->next_poll = now + 20U;
+    if (!video->touch_enabled) {
+        video->touch_enabled = touch_window(video, I30_TOUCH_ENABLE, &sample) && sample;
+        if (!video->touch_enabled)
+            return 1;
+    }
+    for (unsigned i = 0; i < 4; ++i) {
+        if (!touch_window(video, I30_TOUCH_READ, &sample)) {
+            /* A busy OEM UI thread can miss one poll during a legitimate hold. */
+            if (++video->touch_timeouts == 3 || i30_projection_surface() != video->window)
+                return reset_pointer(video);
+            break;
+        }
+        video->touch_timeouts = 0;
+        if (sample == I30_TOUCH_EMPTY)
+            break;
+        if (sample == I30_TOUCH_RESET) {
+            if (!send_touch(video, I30_TOUCH_UP, video->x, video->y))
+                return 0;
+            continue;
+        }
+        unsigned action = I30_TOUCH_ACTION(sample), x = I30_TOUCH_X(sample), y = I30_TOUCH_Y(sample);
+        if (action >= I30_TOUCH_DOWN && action <= I30_TOUCH_MOVE && x < I30_VIDEO_WIDTH && y < I30_VIDEO_HEIGHT &&
+            !send_touch(video, action, x, y))
+            return 0;
+    }
+    return 1;
+}
+
+static int input_message(Projection *video, unsigned flags, unsigned code, const uint8_t *message, unsigned length)
+{
+    const I30SecureChannel *wire = video->wire;
+    if (flags == CONTROL) {
+        if (code == CLOSE) {
+            int released = reset_pointer(video);
+            video->input_open = video->input_bound = 0;
+            return released;
+        }
+        uint32_t priority = 0, service = 0;
+        if (code != OPEN || video->input_open || fields(message + 2, length - 2, &priority, &service) != 3 ||
+            service != INPUT_CHANNEL)
+            return 0;
+        const uint8_t accepted[] = {0, 8, 8, 0};
+        video->input_open = 1;
+        return wire->send(wire->context, INPUT_CHANNEL, CONTROL, accepted, sizeof(accepted));
+    }
+    if (flags || !video->input_open)
+        return 0;
+    if (code == INPUT_FEEDBACK)
+        return 1;
+    if (code != KEY_BINDING || !reset_pointer(video))
+        return 0;
+    video->input_bound = length == 2 || (length == 4 && message[2] == 0x0a && !message[3]);
+    video->next_poll = GetTickCount();
+    uint8_t reply[13] = {KEY_BINDING_RESPONSE >> 8, KEY_BINDING_RESPONSE & 255U, 8};
+    /* No hardware keys are advertised. Reply STATUS_KEYCODE_NOT_BOUND to nonempty requests. */
+    uint8_t *end = put_varint(reply + 3, video->input_bound ? 0 : (uint64_t)-18);
+    return wire->send(wire->context, INPUT_CHANNEL, 0, reply, (unsigned)(end - reply));
+}
+
 static int control(const I30SecureChannel *wire, Projection *video, unsigned code,
                    uint8_t *message, unsigned length)
 {
@@ -258,25 +404,27 @@ static int media(const I30SecureChannel *wire, Projection *video, unsigned code,
     }
 }
 
-int i30_projection_video(const I30SecureChannel *wire, CE_HANDLE window)
+int i30_projection_video(const I30SecureChannel *wire, CE_HANDLE window, int input)
 {
     const unsigned capacity = I30_VIDEO_INPUT_LIMIT + 10U;
     uint8_t *video_buffer = LocalAlloc(0, capacity);
-    Projection video = { .window = window, .state = ADVERTISED, .granted_focus = NATIVE };
+    Projection video = { .wire = wire, .window = window, .state = ADVERTISED, .granted_focus = NATIVE,
+                         .input = input, .last_tick = GetTickCount() };
     int graceful = 0;
     if (!video_buffer)
         return 0;
-    while (update_focus(wire, &video, 1)) {
+    while (update_focus(wire, &video, 1) && poll_touch(&video)) {
         unsigned channel, flags, code;
         uint8_t *message;
-        int size = wire->receive(wire->context, &channel, &flags, video_buffer, capacity, &message);
+        int size = wire->receive(wire->context, &channel, &flags, video_buffer, capacity, &message,
+                                 video.input_bound ? poll_touch : 0, &video);
         if (size < 2)
             break;
         code = ((unsigned)message[0] << 8) | message[1];
         if (channel == 0 && !flags) {
             if (code == GOODBYE) {
                 const uint8_t reply[] = {0, 16};
-                graceful = wire->send(wire->context, 0, 0, reply, sizeof(reply));
+                graceful = reset_pointer(&video) && wire->send(wire->context, 0, 0, reply, sizeof(reply));
                 break;
             }
             if (code == PING) {
@@ -291,10 +439,19 @@ int i30_projection_video(const I30SecureChannel *wire, CE_HANDLE window)
             }
             continue;
         }
+        if (channel == INPUT_CHANNEL && video.input) {
+            if (!input_message(&video, flags, code, message, (unsigned)size))
+                break;
+            continue;
+        }
         if (channel != VIDEO_CHANNEL ||
             !(flags == CONTROL ? control(wire, &video, code, message, (unsigned)size) :
               !flags && media(wire, &video, code, message, (unsigned)size)))
             break;
+    }
+    if (video.touch_enabled) {
+        uint32_t result;
+        touch_window(&video, I30_TOUCH_DISABLE, &result);
     }
     reset_video(&video);
     LocalFree(video_buffer);

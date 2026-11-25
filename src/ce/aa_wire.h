@@ -20,10 +20,14 @@ typedef struct I30FrameHeader {
 
 /* A read returns at most capacity bytes and retains any surplus for the next read.
  * A write returns bytes accepted. The adapter applies its own I/O deadlines. */
+typedef int (*I30ReadPoll)(void *context);
+
 typedef struct I30Link {
     void *context;
     int (*read)(void *context, uint8_t *buffer, unsigned capacity);
     int (*write)(void *context, const uint8_t *buffer, unsigned size);
+    /* Only installed while awaiting a new encrypted frame header. */
+    void (*poll_read)(void *context, I30ReadPoll poll, void *poll_context);
 } I30Link;
 
 enum I30WireResult i30_wire_header(const uint8_t *data, unsigned size, I30FrameHeader *header);

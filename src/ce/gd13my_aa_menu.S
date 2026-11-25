@@ -12,6 +12,37 @@
 .global _start
 _start:
     ldr     r3, [sb, #4]              @ Displaced load of MSG.message
+#ifdef I30_NATIVE_PROJECTION
+    sub     ip, r3, #512
+    cmp     ip, #2                   @ WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP
+    bhi     resume
+    push    {r0-r3, r5, lr}
+    mov     r5, sp
+    bic     sp, sp, #7
+    adrl    r0, native_module        @ Do not load a module from the normal input path.
+    bl      stock_get_module
+    cmp     r0, #0
+    beq     touch_done
+    adrl    r1, native_touch_entry
+    adrl    ip, get_proc_delta
+    ldr     r2, [ip]
+    ldr     ip, [ip, r2]
+    mov     lr, pc
+    bx      ip
+    cmp     r0, #0
+    beq     touch_done
+    mov     ip, r0
+    ldr     r0, [sb]
+    ldr     r1, [sb, #4]
+    ldr     r2, [sb, #12]
+    mov     lr, pc
+    bx      ip
+    cmp     r0, #0
+touch_done:
+    mov     sp, r5
+    pop     {r0-r3, r5, lr}
+    bne     consumed
+#endif
     sub     ip, r3, #512
     sub     ip, ip, #1
     cmp     ip, #1                   @ WM_LBUTTONDOWN or WM_LBUTTONUP
@@ -155,6 +186,8 @@ native_path:
     .string16 "\\DiskA\\Application\\NAVI\\i30nav.dll"
 native_entry:
     .string16 "I30ToggleProjection"
+native_touch_entry:
+    .string16 "I30RouteProjectionTouch"
     .balign 4
 get_proc_delta:
     .word stock_get_proc_iat - get_proc_delta

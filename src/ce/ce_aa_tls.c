@@ -66,7 +66,8 @@ typedef struct Session {
     uint8_t io[BR_SSL_BUFSIZE_BIDI];
     uint8_t wire[TLS_FRAME_MAX + 6U];
     uint8_t control[0x4000];
-    ProtectedMessage control_rx, video_rx;
+    ProtectedMessage control_rx, video_rx, input_rx;
+    uint8_t input[128];
     uint8_t ca[4096], dn[512];
     uint8_t client_cert[8192], key_der[4096];
     uint8_t encoded[12289];
@@ -789,13 +790,18 @@ static int secure_write(Session *s, const I30Link *link, unsigned channel, unsig
 }
 
 static int secure_read_fragment(Session *s, const I30Link *link, unsigned *channel, unsigned *flags,
-                                unsigned *total)
+                                unsigned *total, I30ReadPoll poll, void *poll_context)
 {
     br_ssl_engine_context *engine = &s->client.eng;
     uint8_t header[4];
     unsigned length, decoded = 0;
     size_t capacity;
-    if (!read_exact(link, header, sizeof(header)) || (header[1] & 0xf8U) != 8U)
+    if (poll && link->poll_read)
+        link->poll_read(link->context, poll, poll_context);
+    int received = read_exact(link, header, sizeof(header));
+    if (poll && link->poll_read)
+        link->poll_read(link->context, 0, 0);
+    if (!received || (header[1] & 0xf8U) != 8U)
         return -1;
     *channel = header[0];
     *flags = header[1] & 7U;
@@ -836,7 +842,8 @@ static int secure_read_fragment(Session *s, const I30Link *link, unsigned *chann
 }
 
 static int secure_read(Session *s, const I30Link *link, unsigned *channel, unsigned *flags,
-                       uint8_t *video_buffer, unsigned video_capacity, uint8_t **message)
+                       uint8_t *video_buffer, unsigned video_capacity, uint8_t **message,
+                       I30ReadPoll poll, void *poll_context)
 {
 #ifndef I30_NATIVE_VIDEO
     (void)video_buffer;
@@ -844,7 +851,7 @@ static int secure_read(Session *s, const I30Link *link, unsigned *channel, unsig
 #endif
     for (;;) {
         unsigned raw, total;
-        int size = secure_read_fragment(s, link, channel, &raw, &total);
+        int size = secure_read_fragment(s, link, channel, &raw, &total, poll, poll_context);
         if (size <= 0)
             return -1;
         ProtectedMessage *pending = &s->control_rx;
@@ -852,11 +859,19 @@ static int secure_read(Session *s, const I30Link *link, unsigned *channel, unsig
         unsigned limit = sizeof(s->control);
         if (*channel != 0) {
 #ifdef I30_NATIVE_VIDEO
-            if (*channel != I30_PROJECTION_VIDEO_CHANNEL || !video_buffer)
+            if (!video_buffer)
                 return -1;
-            pending = &s->video_rx;
-            output = video_buffer;
-            limit = video_capacity;
+            if (*channel == I30_PROJECTION_VIDEO_CHANNEL) {
+                pending = &s->video_rx;
+                output = video_buffer;
+                limit = video_capacity;
+            } else if (*channel == I30_PROJECTION_INPUT_CHANNEL) {
+                pending = &s->input_rx;
+                output = s->input;
+                limit = sizeof(s->input);
+            } else {
+                return -1;
+            }
 #else
             return -1;
 #endif
@@ -899,10 +914,10 @@ static int send_media(void *context, unsigned channel, unsigned flags, const uin
 }
 
 static int receive_media(void *context, unsigned *channel, unsigned *flags, uint8_t *video_buffer,
-                         unsigned capacity, uint8_t **message)
+                         unsigned capacity, uint8_t **message, I30ReadPoll poll, void *poll_context)
 {
     MediaLink *media = context;
-    return secure_read(media->session, media->link, channel, flags, video_buffer, capacity, message);
+    return secure_read(media->session, media->link, channel, flags, video_buffer, capacity, message, poll, poll_context);
 }
 #endif
 
@@ -919,7 +934,7 @@ static int discover(Session *s, const I30Link *link, void (*start_video)(void *)
     if (link->write(link->context, verified, sizeof(verified)) != (int)sizeof(verified))
         return 0;
     OutputDebugStringW(L"i30 CE Android Auto AUTH_COMPLETE sent.\r\n");
-    if (secure_read(s, link, &channel, &flags, 0, 0, &message) < 2 ||
+    if (secure_read(s, link, &channel, &flags, 0, 0, &message, 0, 0) < 2 ||
         channel || flags || message[0] || message[1] != DISCOVERY_REQUEST)
         return 0;
     OutputDebugStringW(L"i30 CE Android Auto encrypted service discovery request received.\r\n");
@@ -928,17 +943,26 @@ static int discover(Session *s, const I30Link *link, void (*start_video)(void *)
     if (surface) {
         static const uint8_t video_channel[] = {0x0a, 0x0f, 8, 3, 0x1a, 11, 8, 3,
             0x22, 7, 8, 1, 16, 2, 40, 0xa0, 1};
+        static const uint8_t input_channel[] = {0x0a, 12, 8, 1, 0x22, 8, 0x12, 6,
+            8, 0xa0, 6, 16, 0xe0, 3}; /* TouchScreen 800 x 480, no key codes. */
+        const int input = i30_projection_has_input(surface);
+        unsigned end = sizeof(identity);
         s->control[0] = 0;
         s->control[1] = 6;
-        memcpy(s->control + 2, video_channel, sizeof(video_channel));
-        memcpy(s->control + 2 + sizeof(video_channel), identity + 2, sizeof(identity) - 2);
-        if (!secure_write(s, link, 0, 0, s->control, sizeof(identity) + sizeof(video_channel)))
+        memcpy(s->control + 2, identity + 2, sizeof(identity) - 2);
+        memcpy(s->control + end, video_channel, sizeof(video_channel));
+        end += sizeof(video_channel);
+        if (input) {
+            memcpy(s->control + end, input_channel, sizeof(input_channel));
+            end += sizeof(input_channel);
+        }
+        if (!secure_write(s, link, 0, 0, s->control, end))
             return 0;
         OutputDebugStringW(L"i30 CE authenticated service discovery completed.\r\n");
         start_video(link->context);
         MediaLink media = {s, link};
         I30SecureChannel transport = {&media, send_media, receive_media};
-        if (!i30_projection_video(&transport, surface))
+        if (!i30_projection_video(&transport, surface, input))
             OutputDebugStringW(L"i30 CE projection released the display.\r\n");
         return 1;
     }
@@ -948,7 +972,7 @@ static int discover(Session *s, const I30Link *link, void (*start_video)(void *)
         return 0;
     OutputDebugStringW(L"i30 CE authenticated service discovery completed.\r\n");
     if (secure_write(s, link, 0, 0, disconnect, sizeof(disconnect)))
-        secure_read(s, link, &channel, &flags, 0, 0, &message);
+        secure_read(s, link, &channel, &flags, 0, 0, &message, 0, 0);
     return 1;
 }
 

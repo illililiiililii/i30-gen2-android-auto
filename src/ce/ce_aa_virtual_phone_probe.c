@@ -30,6 +30,38 @@ int DispatchMessageW(void *);
 int CreateProcessW(const CE_WCHAR *, CE_WCHAR *, void *, void *, int, uint32_t, void *,
                    const CE_WCHAR *, void *, ChildProcess *);
 
+#ifdef I30_TEST_WAVE_QUERY
+typedef struct WaveFormat {
+    uint16_t tag, channels;
+    uint32_t rate, bytes_per_second;
+    uint16_t block_align, bits, extra;
+} WaveFormat;
+
+uint32_t waveOutOpen(void *, unsigned, const WaveFormat *, uintptr_t, uintptr_t, unsigned);
+uint32_t waveInOpen(void *, unsigned, const WaveFormat *, uintptr_t, uintptr_t, unsigned);
+
+static void report_wave_result(CE_WCHAR *line, unsigned offset, uint32_t result)
+{
+    static const char digits[] = "0123456789abcdef";
+    for (unsigned i = 0; i < 8; ++i) {
+        line[offset + 7 - i] = digits[result & 15U];
+        result >>= 4;
+    }
+    OutputDebugStringW(line);
+}
+
+static void probe_wave_formats(void)
+{
+    /* Same PCM formats as ce_wave.c. WAVE_FORMAT_QUERY does not open a stream. */
+    const WaveFormat playback = {1, 2, 48000, 192000, 4, 16, 0};
+    const WaveFormat capture = {1, 1, 16000, 32000, 2, 16, 0};
+    CE_WCHAR output[] = L"i30 WAVE query OUT: 00000000\r\n";
+    CE_WCHAR input[] = L"i30 WAVE query IN: 00000000\r\n";
+    report_wave_result(output, 20, waveOutOpen(0, (unsigned)-1, &playback, 0, 0, 1));
+    report_wave_result(input, 19, waveInOpen(0, (unsigned)-1, &capture, 0, 0, 1));
+}
+#endif
+
 static int start_settings(CE_WCHAR *arguments, int wait)
 {
     ChildProcess child;
@@ -54,6 +86,9 @@ void i30_ce_entry(void)
         OutputDebugStringW(L"i30 virtual phone probe clock setup failed.\r\n");
         ExitThread(1);
     }
+#ifdef I30_TEST_WAVE_QUERY
+    probe_wave_formats();
+#endif
 #if defined(I30_TEST_OWNED_WINDOW)
     uintptr_t owner = (uintptr_t)GetForegroundWindow();
     if (!owner) {

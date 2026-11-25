@@ -24,7 +24,7 @@ TLS_API = ('CreateFileW', 'ReadFile', 'LocalAlloc', 'LocalFree',
            'CeGenRandom', 'GetSystemTimeAsFileTime')
 VIDEO_API = ('FindWindowW', 'GetForegroundWindow', 'GetDC', 'ReleaseDC', 'StretchDIBits',
              'GetProcessHeap', 'HeapAlloc', 'HeapFree', 'GetDCEx', 'GetClipBox',
-             'GetWindow', 'IsWindowVisible', 'GetWindowLongW', 'GetClientRect')
+             'GetWindow', 'IsWindowVisible', 'GetWindowLongW', 'GetClientRect', 'SendMessageTimeout')
 SESSION_API = ('GetFileAttributesW', 'RegCreateKeyExW', 'RegSetValueExW', 'RegCloseKey', 'RegDeleteKeyW',
                'CreateEventW', 'GetLastError', 'EventModify', 'CloseHandle', 'WaitForSingleObject',
                'WaitForMultipleObjects', 'OutputDebugStringW')
@@ -36,7 +36,7 @@ SETTINGS_API = ('GetFileAttributesW', 'RegCreateKeyExW', 'RegSetValueExW', 'RegC
                 'GetForegroundWindow', 'GetWindowLongW', 'SetWindowLongW', 'SetTimer', 'CreateThread', 'GetTickCount')
 NATIVE_API = (*SESSION_API, 'GetProcessHeap', 'HeapAlloc', 'HeapFree', 'CreateThread',
               'GetWindow', 'GetParent', 'IsWindow', 'IsWindowVisible', 'GetWindowLongW', 'SetWindowLongW',
-              'GetClientRect', 'ClientToScreen', 'GetWindowThreadProcessId', 'SetWindowPos',
+              'GetClientRect', 'ClientToScreen', 'ScreenToClient', 'WindowFromPoint', 'GetWindowThreadProcessId', 'SetWindowPos',
               'RegisterClassW', 'GetClassInfoW', 'GetStockObject', 'DefWindowProcW', 'CreateWindowExW',
               'DestroyWindow', 'FindWindowW', 'SendMessageW', 'SetTimer', 'KillTimer',
               'InterlockedIncrement', 'InterlockedDecrement', 'InterlockedExchange', 'InterlockedCompareExchange',
@@ -186,12 +186,21 @@ def build(compiler, output, bearssl_source=None, h264_source=None, virtual_lcd_b
             run_tool([compiler, *options, linker, *keep_usb_entry, '-o', elf, *units])
             sections, entry, directory_rva, iat = native_sections(elf)
             if is_dll:
-                names = ('USBDeviceAttach',) if target == DRIVER else ('I30StockDisplayChanged', 'I30ToggleProjection')
+                names = ('USBDeviceAttach',) if target == DRIVER else (
+                    'I30RouteProjectionTouch', 'I30StockDisplayChanged', 'I30ToggleProjection')
                 sections = dll_sections(elf, sections, target, names)
             image = pe_image(sections, entry, directory_rva, iat, api=api, dll=is_dll)
             exe = work / target
             exe.write_bytes(image)
             report[target] = inspect(exe, exports)
+            if video:
+                sample_symbols = {'h264bsdDecode', 'h264bsdNextOutputPictureBGRA'}
+                with elf.open('rb') as linked:
+                    symbols = ELFFile(linked).get_section_by_name('.symtab')
+                    report[target]['video_profile_rvas'] = {
+                        symbol.name: symbol['st_value'] - IMAGE_BASE for symbol in symbols.iter_symbols()
+                        if symbol.name in sample_symbols
+                    }
             if [entry['name'] for entry in report[target]['imports']] != list(api):
                 raise ValueError('Unexpected CE imports')
             if is_dll:

@@ -49,6 +49,8 @@ int FillRect(CE_HANDLE, const CeRect *, CE_HANDLE);
 int DrawTextW(CE_HANDLE, const CE_WCHAR *, int, CeRect *, uint32_t);
 int SetBkMode(CE_HANDLE, int);
 uint32_t SetTextColor(CE_HANDLE, uint32_t);
+int ScreenToClient(CE_HANDLE, CePoint *);
+CE_HANDLE WindowFromPoint(CePoint);
 }
 
 constexpr uint32_t ws_child = 0x40000000, ws_popup = 0x80000000;
@@ -59,6 +61,7 @@ constexpr uint32_t visibility_flags = swp_nosize | swp_nomove | swp_nozorder | s
 constexpr uint32_t wm_destroy = 2, wm_close = 0x10, wm_keydown = 0x100;
 constexpr uint32_t wm_timer = 0x113, wm_mouseactivate = 0x21;
 constexpr uint32_t wm_paint = 0xf, wm_erasebkgnd = 0x14, wm_lbuttondown = 0x201, wm_lbuttonup = 0x202;
+constexpr uint32_t wm_mousemove = 0x200, wm_cancelmode = 0x1f, wm_capturechanged = 0x215;
 constexpr uint32_t wm_stock_display_changed = 0x8001;
 constexpr uintptr_t display_timer = 1;
 constexpr int black_brush = 4, dark_gray_brush = 3;
@@ -69,6 +72,10 @@ struct Projection {
     volatile int32_t references, status;
     int32_t displayed, painted;
     bool closing, back_pressed;
+    bool touch_enabled, touch_pressed, touch_reset;
+    unsigned touch_head, touch_count;
+    uint32_t touch_position;
+    uint32_t touches[32];
 };
 
 CE_HANDLE module = reinterpret_cast<CE_HANDLE>(-1);
@@ -143,6 +150,73 @@ bool video_active(const Projection *state)
     return state->video && WaitForSingleObject(state->video, 0) == CE_WAIT_OBJECT_0;
 }
 
+void reset_touch(Projection *state)
+{
+    state->touch_head = state->touch_count = 0;
+    state->touch_pressed = false;
+    state->touch_reset = true;
+}
+
+bool touch_visible(CE_HANDLE window, const Projection *state)
+{
+    return !state->closing && IsWindowVisible(window) && video_active(state) &&
+           i30_projection_above_map(window, state->map) && i30_stock_display_safe();
+}
+
+uint32_t read_touch(CE_HANDLE window, Projection *state, uint32_t request)
+{
+    constexpr unsigned capacity = sizeof(state->touches) / sizeof(state->touches[0]);
+    if (request != I30_TOUCH_READ) {
+        state->touch_enabled = request == I30_TOUCH_ENABLE;
+        reset_touch(state);
+        return 1;
+    }
+    if (!state->touch_enabled || !touch_visible(window, state))
+        reset_touch(state);
+    if (state->touch_reset) {
+        state->touch_reset = false;
+        return I30_TOUCH_RESET;
+    }
+    if (!state->touch_count)
+        return I30_TOUCH_EMPTY;
+    uint32_t sample = state->touches[state->touch_head];
+    state->touch_head = (state->touch_head + 1) % capacity;
+    --state->touch_count;
+    return sample;
+}
+
+void queue_touch(Projection *state, uint32_t message, int32_t detail)
+{
+    constexpr unsigned capacity = sizeof(state->touches) / sizeof(state->touches[0]);
+    int x = static_cast<int16_t>(detail);
+    int y = static_cast<int16_t>(static_cast<uint32_t>(detail) >> 16);
+    bool inside = x >= 0 && x < I30_VIDEO_WIDTH && y >= 0 && y < I30_VIDEO_HEIGHT;
+    unsigned action = message == wm_lbuttondown ? I30_TOUCH_DOWN :
+                      message == wm_lbuttonup ? I30_TOUCH_UP : I30_TOUCH_MOVE;
+    if (action == I30_TOUCH_DOWN ? state->touch_pressed || !inside : !state->touch_pressed)
+        return;
+    if (!inside) {
+        x = x < 0 ? 0 : x >= I30_VIDEO_WIDTH ? I30_VIDEO_WIDTH - 1 : x;
+        y = y < 0 ? 0 : y >= I30_VIDEO_HEIGHT ? I30_VIDEO_HEIGHT - 1 : y;
+    }
+    uint32_t position = (static_cast<unsigned>(y) << 10) | static_cast<unsigned>(x);
+    if (action == I30_TOUCH_MOVE && position == state->touch_position)
+        return;
+    state->touch_position = position;
+    uint32_t sample = (action << 19) | position;
+    unsigned tail = (state->touch_head + state->touch_count) % capacity;
+    unsigned previous = (tail + capacity - 1) % capacity;
+    if (action == I30_TOUCH_MOVE && state->touch_count && I30_TOUCH_ACTION(state->touches[previous]) == action) {
+        state->touches[previous] = sample;
+    } else if (state->touch_count == capacity) {
+        reset_touch(state);
+    } else {
+        state->touches[tail] = sample;
+        ++state->touch_count;
+        state->touch_pressed = action != I30_TOUCH_UP;
+    }
+}
+
 void paint_status(CE_HANDLE window, Projection *state)
 {
     if (state->closing || video_active(state) || !i30_stock_display_safe() ||
@@ -215,6 +289,7 @@ bool place(CE_HANDLE window, CE_HANDLE map)
 void close_projection(CE_HANDLE window, Projection *state)
 {
     state->closing = true;
+    reset_touch(state);
     hide(window);
     SetEvent(state->cancel);
     if (!state->worker || WaitForSingleObject(state->worker, 0) == CE_WAIT_OBJECT_0)
@@ -228,6 +303,7 @@ void refresh(CE_HANDLE window, Projection *state)
         return;
     }
     if (!i30_stock_display_safe()) {
+        reset_touch(state);
         hide(window);
         return;
     }
@@ -261,10 +337,32 @@ void refresh(CE_HANDLE window, Projection *state)
     }
 }
 
+void handle_touch(CE_HANDLE window, Projection *state, uint32_t message, int32_t detail)
+{
+    if (video_active(state)) {
+        state->back_pressed = false;
+        if (state->touch_enabled && touch_visible(window, state))
+            queue_touch(state, message, detail);
+        else
+            reset_touch(state);
+    } else if (message == wm_lbuttondown) {
+        state->back_pressed = inside_map_button(detail);
+    } else if (message == wm_lbuttonup) {
+        bool go_back = state->back_pressed && inside_map_button(detail);
+        state->back_pressed = false;
+        if (go_back)
+            close_projection(window, state);
+    }
+}
+
 int32_t window_proc(CE_HANDLE window, uint32_t message, uint32_t param, int32_t detail)
 {
     Projection *state = state_for(window);
     if (state) {
+        if (message == I30_TOUCH_MESSAGE)
+            return read_touch(window, state, param);
+        if (message == wm_cancelmode || message == wm_capturechanged)
+            reset_touch(state);
         if (message == wm_paint) {
             ValidateRect(window, nullptr);
             paint_status(window, state);
@@ -272,15 +370,8 @@ int32_t window_proc(CE_HANDLE window, uint32_t message, uint32_t param, int32_t 
         }
         if (message == wm_erasebkgnd)
             return 1;
-        if ((message == wm_lbuttondown || message == wm_lbuttonup) && !video_active(state)) {
-            if (message == wm_lbuttondown) {
-                state->back_pressed = inside_map_button(detail);
-            } else {
-                bool go_back = state->back_pressed && inside_map_button(detail);
-                state->back_pressed = false;
-                if (go_back)
-                    close_projection(window, state);
-            }
+        if (message == wm_lbuttondown || message == wm_lbuttonup || message == wm_mousemove) {
+            handle_touch(window, state, message, detail);
             return 0;
         }
         if ((message == wm_timer && param == display_timer) || message == wm_stock_display_changed) {
@@ -306,6 +397,35 @@ int32_t window_proc(CE_HANDLE window, uint32_t message, uint32_t param, int32_t 
 }
 
 } // namespace
+
+extern "C" int I30RouteProjectionTouch(CE_HANDLE source, uint32_t message, int32_t detail)
+{
+    CE_HANDLE window = FindWindowW(I30_NAVIGATION_PROJECTION_CLASS, nullptr);
+    if (!source || !window || message < wm_mousemove || message > wm_lbuttonup)
+        return 0;
+    auto *state = state_for(window);
+    if (!state || state->closing || !IsWindowVisible(window) || !i30_stock_display_safe() ||
+        !i30_projection_above_map(window, state->map))
+        return 0;
+    if (source != window) {
+        CE_HANDLE root = source;
+        while (root && (GetWindowLongW(root, CE_GWL_STYLE) & ws_child))
+            root = GetParent(root);
+        if (root != state->map)
+            return 0;
+        CePoint point{static_cast<int16_t>(detail), static_cast<int16_t>(static_cast<uint32_t>(detail) >> 16)};
+        if (!ClientToScreen(source, &point))
+            return 0;
+        CE_HANDLE hit = WindowFromPoint(point);
+        if ((hit != window && hit != source && hit != state->map) || !ScreenToClient(window, &point)) {
+            reset_touch(state);
+            return 0;
+        }
+        detail = static_cast<int32_t>((static_cast<uint32_t>(point.y) << 16) | (static_cast<uint32_t>(point.x) & 0xffffU));
+    }
+    handle_touch(window, state, message, detail);
+    return 1;
+}
 
 extern "C" int i30_ce_entry(CE_HANDLE instance, uint32_t reason, void *)
 {

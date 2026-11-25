@@ -100,7 +100,7 @@ static int mock_read(void *context, uint8_t *output, unsigned capacity)
 static int check_wire(void)
 {
     ProbeLink context = {0, 0};
-    I30Link link = {&context, mock_read, mock_write};
+    I30Link link = {&context, mock_read, mock_write, 0};
     uint16_t minor = 0;
     return i30_aa_negotiate_version(&link, &minor) == I30_WIRE_OK && minor == 7U;
 }
