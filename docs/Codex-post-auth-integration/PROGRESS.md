@@ -15,3 +15,4 @@
 - 격리 WinCE도 실폰 AAP 1.7을 수신했다. 첫 시험의 TLS 전 등록 실패는 FAT의 8.3 이름 배정에 있었다. 별칭을 분리한 임시 이미지로 재실행한다. [실폰 기록](../Codex-authentication-resolution/REAL_PHONE_TEST_RESULTS.md#11월-25일-후속-실폰-시험)
 - REA에서 순정 `VID_IOControl`과 `DSP_IOControl`의 export 및 장치 API import를 대조했다. 기존 `VID1:`과 `DSP1:` 장치 경로를 확인했고 코덱 계약과 동시 점유 정책은 후속 연구에 남겼다. [DSP 근거](OEM_AND_HARDWARE.md#영상-dsp-가능성)
 - 별칭을 분리한 WinCE 시험에서 실폰 TLS 1.2, 헤드유닛 리프 및 CertificateVerify 송신을 확인했다. 폰 Conscrypt가 자체 시험 신원의 신뢰 앵커를 찾지 못했다. 인증 완료 이전에 종료됐고 ADB를 복구했다. 순정 가상폰 실행은 독립적으로 후방과 반복 연결을 계속한다. [실폰 결과](../Codex-authentication-resolution/REAL_PHONE_TEST_RESULTS.md#11월-25일-후속-실폰-시험)
+- ARM 영상 예외 회귀를 확장했다. 잘못된 IDR NAL과 816픽셀 폭을 각각 거부했고, 이후 출력·영상 ACK 및 추적 할당이 모두 0건임을 확인했다. [ARM 회귀](REGRESSION_TEST_RESULTS.md)

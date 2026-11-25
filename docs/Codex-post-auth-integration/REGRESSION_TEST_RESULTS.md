@@ -15,6 +15,7 @@
 | 수신 대기와 후방 단절 | USB 수신 대기 및 zero-length packet 중에도 올바른 터치 6건. 창 읽기 지연을 한 번 주입한 뒤에도 접촉 순서 유지. 후방 표시 이벤트 중 분리 시 출력 1장 이후 터치 0건, 추적 할당 반환. |
 | Python·네이티브 빌드 | 기존 Python 84개 유지. WinCE ARM USB 전용, BearSSL/h264bsd 투사 빌드와 기존 USB·TLS·영상 회귀 통과. 실제 ARM 순정 터치 트램펄린의 전달·복귀 분기와 자동 시작 시나리오 재실행. |
 | 분리된 SPS/PPS, IDR 및 재시작 | 최신 `tested-ce`에서 무타임스탬프 `CODEC_CONFIG`를 두 TLS/AAP 조각으로 보내고 사이에 제어 ping을 삽입했다. SPS/PPS ACK까지만 수신한 시점에는 표시 0장, 이후 64비트 타임스탬프가 붙은 IDR을 받아 표시 1장과 올바른 세션 ACK를 확인했다. STOP/SETUP/START 이후 동일 흐름을 반복해 설정 ACK, 영상 ACK, 표시, pong이 각각 총 2회였다. |
+| 잘못된 영상 입력 | 폭 816과 참조 표시가 없는 잘못된 IDR NAL을 각각 거부했다. 두 경우 모두 표시·영상 ACK 0건, 세션 종료 뒤 추적 할당 0건이었다. [잘못된 영상 ARM 회귀](../../build/codex-post-auth-integration/malformed-video-arm-regression.json) |
 
 1분 시험의 평균·최대 프레임 ACK 시간은 각각 117.230/336.471 ms, 5분 시험은 108.038/329.586 ms이다. 실제 ARM 코드와 가상 USB·GDI API를 사용하는 5분 시험의 호스트 처리량은 약 9.24 FPS였다. 기기 시간은 시험 송신자가 정한 간격으로 증가한다. ACK 시간에는 전송·복호화·디코딩·GDI 호출이 포함된다. [1분 영상 원본](../../build/codex-post-auth-integration/arm-video-60s.json) · [5분 영상 원본](../../build/codex-post-auth-integration/arm-video-300s.json) · [고움직임 15 FPS](../../build/codex-post-auth-integration/arm-motion-15.json) · [24 FPS](../../build/codex-post-auth-integration/arm-motion-24.json) · [30 FPS](../../build/codex-post-auth-integration/arm-motion-30.json) · [ARM 반복 연결 및 예외 원본](../../build/codex-post-auth-integration/tested-arm-regression.json)
 

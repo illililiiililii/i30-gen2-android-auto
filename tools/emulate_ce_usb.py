@@ -1389,10 +1389,18 @@ def test_stress(path, openssl, rounds):
             abrupt[failure] = {'painted': guest.projected, 'touch_reports': len(guest.touch_reports),
                                'cleared_allocations': len(guest.allocations), 'transfers_closed': result['closed_transfers']}
 
-        oversize = NativeUsbStress(path, files, peer, [stress_frames(15, 1, width=816)[0][0]])
-        result = oversize.attach()
-        assert oversize.authenticated and not oversize.projected and not oversize.closed_gracefully, result
-        assert not oversize.allocations and not oversize.video_active, result
+        invalid_video = {
+            'oversize': stress_frames(15, 1, width=816)[0][0],
+            'idr_without_reference': b'\x00\x00\x00\x01\x05\x80',  # IDR requires nonzero nal_ref_idc.
+        }
+        rejected_video = {}
+        for case, packet in invalid_video.items():
+            guest = NativeUsbStress(path, files, peer, [packet])
+            result = guest.attach()
+            assert guest.authenticated and not guest.closed_gracefully and not guest.video_acks, result
+            assert not guest.projected and not guest.allocations and not guest.video_active and not guest.touch_armed, result
+            rejected_video[case] = {'displayed': guest.projected, 'acked': guest.video_acks,
+                                    'live_allocations_after_close': len(guest.allocations)}
         restarted = NativeUsbStress(path, files, peer, one_frame * 2, restart=True)
         result = restarted.attach()
         assert restarted.closed_gracefully and restarted.projected == restarted.video_acks == 2, result
@@ -1426,6 +1434,7 @@ def test_stress(path, openssl, rounds):
                 'resident_pongs': keepalive.pongs, 'resident_painted_frames': keepalive.projected,
                 'abrupt_cleanup': abrupt, 'video_oversize_rejected': True, 'video_restart_painted_frames': 2,
                 'input_while_phone_idle': idle_input, 'separate_codec_config': separate_config,
+                'rejected_video': rejected_video,
                 'completed_session_checkpoints': milestones,
                 'peak_requested_bytes_across_attaches': sorted(peak), 'live_allocations_after_each_attach': 0}
 
