@@ -18,6 +18,12 @@ REA로 `.061` `LibSound.dll`의 `lSoundGetSoundAuthority`, `lSoundSetSoundAuthor
 
 기존 ARM 부팅 패치와 설정 시험은 자동 시작 플래그 유무, 중복 실행 방지, 설정 저장·제거, 취소 경로를 검증한다. 실제 시동·절전·배터리 전환과 기동 시 이미 연결된 폰의 처리 순서, Bluetooth 활성 상태에서의 복귀는 차량 벤치 항목이다. [자동 시작 패치 검증](../../build/codex-post-auth-integration/startup-arm.json) · [기존 자동 시작 시험](../PHASE7_8_RESULTS.md)
 
+## 영상 DSP 가능성
+
+Web-ChatGPT의 TI SDK 조사에서 제시한 장치 경계를 실제 `.061` PE에서 대조했다. REA export 원장에 `videodev.dll`의 `VID_IOControl` VA `0x10009cd0`과 `dsp_bridge.dll`의 `DSP_IOControl` VA `0x10255ba4`가 있다. `videodev.dll`은 `CreateFileW`와 `DeviceIoControl`을 import하고 UTF-16 `DSP1:`을 파일 오프셋 `0x4510`에 포함한다. `LibMMCodec.dll`은 두 API를 import하고 `VID1:`을 `0x65c94`에 포함한다. 기존 역공학의 장치 경로와 일치한다. Android Auto의 Annex B 입력을 받는 OEM IOCTL 계약, DSP 서버의 H.264 프로파일 지원과 자원 중재는 여전히 확인이 필요하다. 하드웨어 가속의 적용 판정은 이 증거를 확보할 때까지 보류한다. [펌웨어 영상 분석](../VIDEO_AUDIO_ANALYSIS.md) · [TI SDK 후속 연구](../chatGPT-search/Web-chatGPT/GD13MY_DSP_ACCELERATION_RESEARCH.md) · [REA 영상 드라이버](../../build/codex-post-auth-integration/videodev.dll.rea.json) · [REA DSP 드라이버](../../build/codex-post-auth-integration/dsp_bridge.dll.rea.json)
+
+GNU ARM objdump로 `videodev.dll`의 `ProcessDecodeRsp: Unsupported H.264 Profile` 참조를 확인했다. VA `0x10009c10`에서 응답 값과 `0x76d`를 비교하고, 일치하면 `0x10009c18`에서 이 문자열을 읽은 뒤 `0x80004001`을 반환한다. 응답 값과 실제 프로파일의 매핑은 남아 있다. [ARM 분기 원본](../../build/codex-post-auth-integration/dsp-profile-disassembly.txt)
+
 ## 실폰과 차량 벤치 절차
 
 1. 권한이 확보된 개발 신원, 동일 시험폰, USB 데이터 케이블과 UART·ADB를 준비한다. 먼저 정지된 에뮬레이터 환경에서 AOA, AAP 버전, TLS Finished, `AUTH_COMPLETE`를 각각 확인한다. 화면·입력 시험은 성공한 인증 세션으로 진행한다. [등록과 실폰 시험](../Codex-authentication-resolution/REAL_PHONE_TEST_RESULTS.md)
