@@ -7,6 +7,7 @@ param(
     [switch]$AutoCalibrate,
     [switch]$FastStorage,
     [switch]$BootTrace,
+    [switch]$LivePng,
     [switch]$NativeTls = $true,
     [switch]$OwnedWindowCandidate,
     [string]$StockProjectionImage,
@@ -129,6 +130,9 @@ if ($AutoCalibrate) {
 }
 if ($BootTrace) {
     $viewerArgs += '--boot-trace'
+}
+if ($LivePng) {
+    $viewerArgs += '--live-png'
 }
 $previousTemp, $previousTmp = $env:TEMP, $env:TMP
 try {

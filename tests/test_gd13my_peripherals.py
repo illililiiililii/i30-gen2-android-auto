@@ -448,6 +448,8 @@ class Gd13myPeripheralTests(unittest.TestCase):
         length = struct.unpack_from('>I', image, 33)[0]
         self.assertEqual(image[37:41], b'IDAT')
         self.assertEqual(zlib.decompress(image[41:41 + length]), bytes.fromhex('00 ff0000 00ff00 00 0000ff ffffff'))
+        _, raw = display.capture_rgb(lambda _, n: ram[:n], lambda addr, n: addr == base and n == len(ram))
+        self.assertEqual(raw, b'P6\n2 2\n255\n' + bytes.fromhex('ff0000 00ff00 0000ff ffffff'))
 
     def test_emmc_sd_dma_and_settings_overlay(self):
         data = bytes(range(256)) * 2

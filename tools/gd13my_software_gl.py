@@ -258,6 +258,7 @@ class GuestGL:
         self.next_map_copy = 0
         self.next_preview = 0
         self.swaps = 0
+        self.ready_swaps = 0
         self.map_copies = 0
         self.map_copy_seconds = 0.0
         self.first_map_copy = self.last_map_copy = None
@@ -569,6 +570,7 @@ class GuestGL:
             )
         if ordinal == 22:
             self.swaps += 1
+            self.ready_swaps += self.run.navigation_ready
             now = monotonic()
             preview = self.preview and now >= self.next_preview
             copy = self.run.display is not None and now >= self.next_map_copy
@@ -605,6 +607,7 @@ class GuestGL:
     def map_report(self):
         return {
             "guest_swaps": self.swaps,
+            "guest_swaps_after_ready": self.ready_swaps,
             "video_plane_copies": self.map_copies,
             "copy_seconds": round(self.map_copy_seconds, 4),
             "copy_window_seconds": (round(self.last_map_copy - self.first_map_copy, 4)

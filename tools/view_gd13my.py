@@ -144,7 +144,8 @@ class WindowedRun(KernelRun):
 
     def __init__(self, image, card, messages, pointer, menu_button, closing, output, *, omap_public_rom=None,
                  display_mode=3, assist_navi_start=False, assist_touch_calibration=False, phone_port=None,
-                 controls=None, projection=None, auto_calibrate=False, boot_trace=False, usb_clock_units=None):
+                 controls=None, projection=None, auto_calibrate=False, boot_trace=False, usb_clock_units=None,
+                 live_png=False):
         self.touch = TouchController()
         super().__init__(image, 'gd13my', 'boot', guest_exceptions=True, virtual_timer=True,
                          card=card, display=True, timer_irq=True, boot_trace=boot_trace, touch=self.touch,
@@ -172,6 +173,13 @@ class WindowedRun(KernelRun):
         self.next_touch_tick = 0
         self.held_contact = None
         self.last_frame = None
+        self.last_frame_size = None
+        self.live_png = live_png
+        self.ready_ticks = None
+        self.lcd_stats = {
+            phase: {'polls': 0, 'frames': 0, 'capture_seconds': 0.0}
+            for phase in ('boot', 'ready')
+        }
         self.assist_navi_start = assist_navi_start
         self.assist_touch_calibration = assist_touch_calibration
         self.auto_calibrate = auto_calibrate
@@ -352,6 +360,7 @@ class WindowedRun(KernelRun):
             if not self.navigation_ready and ((self.wait_for_navigation and NAVIGATION_READY in self.uart.output)
                                               or (not self.wait_for_navigation and self.last_frame is not None)):
                 self.navigation_ready = True
+                self.ready_ticks = ticks
                 self.boot_timings['navigation_ready'] = round(now - self.boot_started, 3)
                 if self.wait_for_navigation:
                     self.micom.report_rear_view()
@@ -414,9 +423,13 @@ class WindowedRun(KernelRun):
 
     def publish_frame(self):
         started = monotonic()
-        report, frame = self.display.capture(self.cpu.mem_read, self.contains_ram)
+        report, frame = self.display.capture_rgb(self.cpu.mem_read, self.contains_ram)
+        capture_seconds = monotonic() - started
+        stats = self.lcd_stats['ready' if self.navigation_ready else 'boot']
+        stats['polls'] += 1
+        stats['capture_seconds'] += capture_seconds
         # Poll unchanged screens quickly and leave CPU time for the guest during animations.
-        self.next_frame_time = started + max(1 / 30, 4 * (monotonic() - started))
+        self.next_frame_time = started + max(1 / 30, 4 * capture_seconds)
         if frame is None:
             return
         if self.last_frame is None and report['uniform']:
@@ -436,14 +449,23 @@ class WindowedRun(KernelRun):
             return
         self.boot_timings.setdefault('first_lcd_frame', round(started - self.boot_started, 3))
         self.last_frame = frame
-        self.output.with_suffix('.png').write_bytes(frame)
+        self.last_frame_size = report['width'], report['height']
+        stats['frames'] += 1
         self.messages.put(('frame', frame))
+        if self.live_png:
+            self.save_lcd_snapshot()
 
+    def save_lcd_snapshot(self):
+        if self.last_frame is not None:
+            from gd13my_display import scanout_png
+
+            self.output.with_suffix('.png').write_bytes(scanout_png(*self.last_frame_size, self.last_frame))
 
 def boot(image, disk, seconds, messages, pointer, menu_button, closing, output, public_rom, display_mode,
          software_gl_app, assist_navi_start, assist_touch_calibration, app_volume, usb_port, libusb, panel,
          state_path=None, usb_on_test=False, projection=None, auto_calibrate=False,
-         boot_trace=False, show_map_preview=False, host_utc_offset=None, boot_clock_units=None, usb_clock_units=None):
+         boot_trace=False, show_map_preview=False, host_utc_offset=None, boot_clock_units=None, usb_clock_units=None,
+         live_png=False):
     phone_port = None
     try:
         if boot_clock_units is not None:
@@ -480,7 +502,7 @@ def boot(image, disk, seconds, messages, pointer, menu_button, closing, output, 
                                   display_mode=display_mode, assist_navi_start=assist_navi_start,
                                   assist_touch_calibration=assist_touch_calibration, phone_port=phone_port,
                                   controls=panel, projection=projection, auto_calibrate=auto_calibrate,
-                                  boot_trace=boot_trace, usb_clock_units=usb_clock_units)
+                                  boot_trace=boot_trace, usb_clock_units=usb_clock_units, live_png=live_png)
                 renderer = None
                 if software_gl_app is not None:
                     from gd13my_software_gl import GuestGL
@@ -494,6 +516,10 @@ def boot(image, disk, seconds, messages, pointer, menu_button, closing, output, 
                 report['touch'] = {'samples': run.touch.consumed, 'last_reply': hex(run.touch.last_reply),
                                    'commands': {hex(word): count for word, count in run.touch.commands.items()}}
                 report['wall_seconds_from_guest_init'] = run.boot_timings
+                report['lcd_capture'] = run.lcd_stats
+                report['ready_clock_ticks'] = run.ready_ticks
+                if not live_png:
+                    run.save_lcd_snapshot()
                 if renderer is not None:
                     report['stock_map'] = renderer.map_report()
                 report['virtual_micom_requests'] = list(run.micom.exchanges)
@@ -522,6 +548,7 @@ def main():
     parser.add_argument('--app-volume', type=Path, help='Use DiskA from a compact image while retaining the original map volumes')
     parser.add_argument('--host-utc-offset', type=int, help='Supply current UTC to the reserved DiskA mailbox')
     parser.add_argument('--save-state', type=Path, help='Keep guest DiskA writes in a separate state database')
+    parser.add_argument('--live-png', action='store_true', help='Write each changed LCD frame as a diagnostic PNG')
     parser.add_argument('--usb-port', metavar='BUS-PORT|auto',
                         help='Forward a physical port, or select a single eligible phone after the guest requests it')
     parser.add_argument('--usb-on-test', action='store_true', help='Attach the selected USB port when the CE test starts')
@@ -643,9 +670,16 @@ def main():
     last_heartbeat = None
     guest_seconds = touches = 0
     map_view = map_picture = None
+    presentation = {}
+    boot_output = None
+
+    def save_presentation():
+        if presentation:
+            boot_output.with_suffix('.tk.json').write_text(json.dumps(presentation, indent=2), encoding='utf-8')
+            presentation.clear()
 
     def power_on():
-        nonlocal worker, closing, pointer, panel, menu_button
+        nonlocal worker, closing, pointer, panel, menu_button, boot_output
         nonlocal picture, projected_picture, projected_frame, guest_visible, navigation_ready, pressed
         nonlocal idle, last_heartbeat, guest_seconds, touches, map_view, map_picture, power_error
         if window_closing or power_stopping or (worker is not None and worker.is_alive()):
@@ -671,6 +705,7 @@ def main():
         input_status.set('내비가 로딩되면 F2로 메뉴를 열 수 있습니다.')
         usb_status.set(f'물리 USB {args.usb_port} 연결 대기')
         boot_output = args.output_dir / datetime.now().strftime('gd13my-window-%Y%m%d-%H%M%S-%f')
+        presentation.clear()
         if projection is not None:
             projection.ready.clear()
             projection.log_path = boot_output.with_suffix('.projection.jsonl')
@@ -681,7 +716,7 @@ def main():
                   args.omap_public_rom, display_mode, args.software_gl_app, args.assist_navi_start,
                   args.assist_touch_calibration, args.app_volume, args.usb_port, args.libusb, panel,
                   args.save_state, args.usb_on_test, projection, args.auto_calibrate, args.boot_trace,
-                  args.show_map_preview, args.host_utc_offset, int(clock_units), usb_clock_units),
+                  args.show_map_preview, args.host_utc_offset, int(clock_units), usb_clock_units, args.live_png),
             daemon=True,
         )
         ignition_on.configure(state='disabled')
@@ -711,6 +746,7 @@ def main():
             if worker.is_alive():
                 root.after(100, refresh)
             else:
+                save_presentation()
                 root.destroy()
             return
         latest_frame = None
@@ -759,9 +795,16 @@ def main():
                 input_status.set('이 창에 마지막 게스트 화면이 남아 있습니다.')
                 menu_control.configure(state='disabled')
         if latest_frame is not None:
-            picture = tk.PhotoImage(data=latest_frame, format='png')
+            started = monotonic()
+            picture = tk.PhotoImage(data=latest_frame, format='PPM')
             if projected_frame is None:
                 canvas.itemconfigure(viewport, image=picture)
+                phase = 'ready' if navigation_ready else 'boot'
+                stats = presentation.setdefault(phase, {'frames': 0, 'tk_seconds': 0.0,
+                                                         'first_submit': started, 'last_submit': started})
+                stats['frames'] += 1
+                stats['tk_seconds'] += monotonic() - started
+                stats['last_submit'] = started
             if not guest_visible:
                 guest_visible = True
                 root.title('GD13MY 순정 펌웨어 — 게스트 화면')
@@ -777,6 +820,8 @@ def main():
         elif not worker.is_alive():
             ignition_on.configure(state='normal')
             ignition_off.configure(state='disabled')
+        if not worker.is_alive():
+            save_presentation()
         frame = projection.frame() if projection is not None else None
         if frame is not projected_frame:
             projected_frame = frame

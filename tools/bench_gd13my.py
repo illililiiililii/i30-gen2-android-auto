@@ -229,6 +229,9 @@ def main():
     stop_context = report.get('stop_context') or {}
     ticks = stop_context.get('clock_ticks') or 0
     guest_seconds = ticks / 32768
+    ready_ticks = report.get('ready_clock_ticks')
+    ready_guest_seconds = (ticks - ready_ticks) / 32768 if ready_ticks is not None else None
+    ready_wall_seconds = started + wall - ready_at if ready_at is not None else None
     summary = {
         'wall_seconds': round(wall, 3),
         'first_lcd_frame': boot_timings.get('first_lcd_frame'),
@@ -238,9 +241,14 @@ def main():
         'guest_clock_munits_per_wall_second': round(guest_seconds * boot_clock_units / wall / 1e6, 2),
         'timer': report.get('timer'),
         'stock_map': report.get('stock_map'),
+        'lcd_capture': report.get('lcd_capture'),
+        'ready_guest_seconds': round(ready_guest_seconds, 3) if ready_guest_seconds is not None else None,
+        'ready_guest_seconds_per_wall_second': (round(ready_guest_seconds / ready_wall_seconds, 3)
+                                                if ready_guest_seconds is not None and ready_wall_seconds else None),
         'route_inputs_sent': route_event,
         'lcd_after_ready': {
             'changed_frames': lcd_frames,
+            'changed_frames_per_wall_second': round(lcd_frames / ready_wall_seconds, 3) if ready_wall_seconds else None,
             'first_to_last_seconds': (round(previous_lcd - first_lcd_after_ready, 4)
                                       if lcd_frames else None),
             'longest_gap_seconds': round(longest_lcd_gap, 4) if lcd_frames > 1 else None,

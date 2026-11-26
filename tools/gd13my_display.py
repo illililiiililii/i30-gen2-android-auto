@@ -39,6 +39,14 @@ def png(width, height, rows):
             chunk(b'IDAT', zlib.compress(rows, level=1)) + chunk(b'IEND', b''))
 
 
+def scanout_png(width, height, frame):
+    header = f'P6\n{width} {height}\n255\n'.encode('ascii')
+    pixels = memoryview(frame)[len(header):]
+    stride = width * 3
+    return png(width, height, b''.join(b'\0' + pixels[start:start + stride]
+                                      for start in range(0, len(pixels), stride)))
+
+
 class LcdDisplay(ResetBank):
     def __init__(self):
         super().__init__(DISPC + 0x10, DISPC + 0x14)
@@ -47,6 +55,7 @@ class LcdDisplay(ResetBank):
         self.color_key = None
         self._last_scanout = None
         self._last_capture = None
+        self._png_frame = self._png_data = None
 
     def reg(self, offset):
         return self.read(DISPC + offset, 4)
@@ -115,6 +124,16 @@ class LcdDisplay(ResetBank):
         return True
 
     def capture(self, read_ram, contains_ram):
+        report, frame = self.capture_rgb(read_ram, contains_ram)
+        if frame is None:
+            self._png_frame = self._png_data = None
+            return report, None
+        if frame is not self._png_frame:
+            self._png_data = scanout_png(report['width'], report['height'], frame)
+            self._png_frame = frame
+        return report, self._png_data
+
+    def capture_rgb(self, read_ram, contains_ram):
         layout, status = self.layout(self.active, contains_ram)
         if layout is None:
             self._last_scanout = self._last_capture = None
@@ -135,12 +154,13 @@ class LcdDisplay(ResetBank):
         else:
             words = struct.Struct(f'<{width}H')
             key = self.color_key
-            key_row = struct.pack('<H', key) * width if backdrop is not None else None
+            key_bytes = struct.pack('<H', key) if backdrop is not None else None
+            key_row = key_bytes * width if key_bytes is not None else None
             rows = []
             for row in range(height):
                 start = row * stride
                 pixels = source[start:start + row_bytes]
-                if backdrop is not None:
+                if key_bytes is not None and key_bytes in pixels:
                     video_start = row * video[3]
                     if pixels == key_row:
                         pixels = backdrop[video_start:video_start + row_bytes]
@@ -154,16 +174,15 @@ class LcdDisplay(ResetBank):
         low, high = packed[::2], packed[1::2]
         green = int.from_bytes(high.translate(RGB565_GREEN_HIGH), 'little') | int.from_bytes(
             low.translate(RGB565_GREEN_LOW), 'little')
-        rgb = bytearray(width * height * 3)
-        rgb[::3] = high.translate(RGB565_RED)
-        rgb[1::3] = green.to_bytes(width * height, 'little')
-        rgb[2::3] = low.translate(RGB565_BLUE)
-        rgb_row_bytes = width * 3
-        png_rows = b''.join(b'\0' + rgb[start:start + rgb_row_bytes]
-                           for start in range(0, len(rgb), rgb_row_bytes))
+        header = f'P6\n{width} {height}\n255\n'.encode('ascii')
+        rgb = bytearray(len(header) + width * height * 3)
+        rgb[:len(header)] = header
+        rgb[len(header)::3] = high.translate(RGB565_RED)
+        rgb[len(header) + 1::3] = green.to_bytes(width * height, 'little')
+        rgb[len(header) + 2::3] = low.translate(RGB565_BLUE)
         report = {'status': 'captured', 'base': hex(base), 'width': width, 'height': height,
                   'stride': stride, 'uniform': packed == packed[:2] * (width * height)}
-        frame = png(width, height, png_rows)
+        frame = bytes(rgb)
         self._last_scanout = scanout
         self._last_capture = report.copy(), frame
         return report, frame
