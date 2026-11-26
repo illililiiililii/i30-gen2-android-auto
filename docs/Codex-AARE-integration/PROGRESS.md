@@ -7,5 +7,6 @@
 - 공식 AARE 1.6.0을 Samsung SM-G996N(Android 15)에 설치했다. 사용자 폰 인증서 가져오기 완료. 초기 AARE 로그에서 USB 권한 허용과 액세서리 열기 실패를 확인했다. 같은 시점에 순정 Android Auto 세션이 USB를 사용하고 있어 이를 종료하고 AARE를 다시 실행했다.
 - 중단 직전 UART에서 실폰 상호 TLS와 `AUTH_COMPLETE`, 서비스 탐색을 확인했다. 같은 실행에서 별도의 인증서 체인 실패 및 USB 타임아웃도 발견했다. 영상과 터치는 실폰에서 확인되지 않았다. [실폰 시험과 인증서 대조](REAL_PHONE_TEST_RESULTS.md)
 - 재개 후 USB 속도 변경의 폴링 기준과 bulk IN 재시도를 수정했다. 안내의 설치 페이지에 공식 다운로드 QR을 추가했다. Python 회귀 86개를 통과했고 별도 800×480 순정 시험 이미지를 빌드한다.
+- 새 실폰 로그에서 AARE가 `GD13MY-AARE.p12` 외의 앱 내 인증서를 선택하는 것을 확인했다. 넘겨받은 WinCE의 신뢰 설정은 기존 P12에 맞았다. TLS 경고를 추가했고 ARM 회귀에서 체인과 지문을 각각 거부했을 때 상대에게 정확한 TLS 경고가 도달했다. [재시험 기록](REAL_PHONE_TEST_RESULTS.md#소프트웨어-재연결과-인증서-선택-확인)
 
 [소스 비교](COMPATIBILITY_ANALYSIS.md) · [실행 및 신뢰 등록](FINAL_HANDOFF.md)

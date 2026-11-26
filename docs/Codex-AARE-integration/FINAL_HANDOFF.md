@@ -8,7 +8,7 @@
 Set-Location F:\i30-gen2-android-auto
 $disk = Join-Path $env:LOCALAPPDATA 'i30-gd13my/codex-auth-map-cache/gd13my-media-v2.img'
 .\tools\run_gd13my_phase78.ps1 -DiskPath $disk `
-    -StockProjectionImage build/aare-integration/resume/gd13my-aare-stock-display.img `
+    -StockProjectionImage build/aare-integration/verified-alert/gd13my-aare-stock-display.img `
     -OutputDirectory build/aare-integration/current
 ```
 

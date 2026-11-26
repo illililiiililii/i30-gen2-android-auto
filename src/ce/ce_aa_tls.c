@@ -1081,6 +1081,16 @@ static const CE_WCHAR *handshake(Session *s, const I30Link *link)
     return L"i30 CE TLS handshake exceeded the step limit.\r\n";
 }
 
+static void notify_aare_untrusted_phone(Session *s, const I30Link *link)
+{
+    if (s->tx.encrypted || s->rx.encrypted)
+        return;
+    /* BearSSL has already stopped. The connection is still in the plaintext TLS 1.2 state. */
+    const uint8_t alert[] = {21, 3, 3, 0, 2, 2, s->pinned.rejected ? 49 : 48};
+    if (send_record(s, link, alert, sizeof(alert)))
+        OutputDebugStringW(L"i30 CE TLS notified AARE of the phone certificate rejection.\r\n");
+}
+
 enum I30AuthResult i30_ce_authenticate(const I30Link *link, void (*start_video)(void *),
                                       void (*video_presented)(void *))
 {
@@ -1109,6 +1119,8 @@ enum I30AuthResult i30_ce_authenticate(const I30Link *link, void (*start_video)(
         status = handshake(session, link);
         unsigned error = br_ssl_engine_last_error(&session->client.eng);
         result = I30_AUTH_FAILED;
+        if (status && aare && error == BR_ERR_X509_NOT_TRUSTED)
+            notify_aare_untrusted_phone(session, link);
         if (error == BR_ERR_RECV_FATAL_ALERT + 42U || error == BR_ERR_RECV_FATAL_ALERT + 46U ||
             error == BR_ERR_RECV_FATAL_ALERT + 48U)
             result = I30_AUTH_PHONE_REFUSED;

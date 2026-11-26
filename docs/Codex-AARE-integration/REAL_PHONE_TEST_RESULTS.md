@@ -25,3 +25,11 @@
 - USB 전환 시 게스트 시간은 유지하고, IRQ 폴링과 입출력 폴링의 CPU 단위 기한도 새 속도에 맞췄다. AARE 시험 이미지의 USB 구간 기본값은 12 MHz이며 `-UsbClockMHz`로 설정할 수 있다. 기존 실행 프로필의 기본값은 64 MHz다.
 - Windows USB 전달에서 bulk IN의 libusb 타임아웃을 미응답으로 유지한다. 앱이 아직 데이터를 보내지 않은 경우에는 WinCE의 읽기 요청과 취소를 계속 처리한다. 장치 분리나 다른 I/O 오류에는 기존 오류 경로를 사용한다.
 - WinCE UART에 수신 폰 리프, 등록 CA 및 기대 지문을 기록하고, 투사 단계에서 오류가 발생하면 AAP 채널·플래그·메시지 ID를 기록하도록 추가했다. 로그는 인증 데이터의 SHA-256과 메시지 식별자만 남긴다.
+
+## 소프트웨어 재연결과 인증서 선택 확인
+
+09:30:50부터 순정 WinCE에서 AOA 2와 AAP 1.7을 다시 확인했다. 폰 로그의 인증서 표시는 `Android Auto 18.1.664444-release`였다. AARE의 세션에서 WinCE `ClientHello` 수신과 다른 서버 인증서 송신이 기록됐고, 이어 WinCE는 BearSSL 62로 그 체인을 거부했다. AARE는 명시적인 TLS 경고를 받지 못해 끊김으로 해석했고 같은 인증서를 다시 선택했다. 원본은 `build/aare-integration/resume/android-first.log`와 `android-second.log`에 있다.
+
+이제 AARE 모드에서 BearSSL이 신뢰 실패로 핸드셰이크를 중단했고 양방향 TLS가 암호화 상태로 전환되기 전이면, 수신기가 TLS 1.2 표준 fatal `unknown_ca` 또는 지문 불일치의 `access_denied`를 전송한다. AARE가 인증서 거절과 USB 끊김을 구별해 다음 등록 인증서를 시도할 수 있다. ARM PE 회귀에서 두 경고를 TLS 상대가 각각 받았고, 등록된 CA와 지문이 맞을 때 인증이 완료됐다. [TLS 1.2 경고](https://www.rfc-editor.org/rfc/rfc5246.html#section-7.2.2)
+
+`adb shell svc usb setFunctions mtp`로 폰을 일반 USB로 전환한 뒤 가상 USB 재연결을 수행했다. 정식 Windows 포트 재시작은 현재 권한에서 거부됐다. 순정 WinCE의 AOA 재요청으로 액세서리 모드와 AAP 1.7에 다시 도달했다. 새 TLS 경고가 들어간 별도 DiskA의 실폰 시험은 순정 부팅 후 이어간다.

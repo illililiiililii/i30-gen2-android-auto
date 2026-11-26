@@ -1022,11 +1022,20 @@ def test_tls(path, openssl, exercise_projection=False):
         assert aare.authenticated and aare.closed_gracefully, result
         for name in ('trust anchor', 'expected phone leaf', 'received phone leaf'):
             assert f'i30 CE TLS {name} SHA-256: {fingerprint}' in result['debug'], result
+        refused = TlsUsbClient(path, dict(aare_files, **{'i30-aare-peer-sha256.txt': b'0' * 64}), context)
+        result = refused.attach()
+        assert refused.peer_error == 'TLSV1_ALERT_ACCESS_DENIED' and not refused.authenticated, result
+        with test_identity(openssl) as (other_cert, _, _):
+            aare_other_ca = ssl.PEM_cert_to_DER_cert(other_cert.read_text(encoding='ascii'))
+            refused = TlsUsbClient(path, dict(aare_files, **{'i30-aare-ca.der': aare_other_ca}), context)
+            result = refused.attach()
+            assert refused.peer_error == 'TLSV1_ALERT_UNKNOWN_CA' and not refused.authenticated, result
         del aare_files['i30-aare-peer-sha256.txt']
         aare = TlsUsbClient(path, aare_files, context)
         result = aare.attach()
         assert not aare.authenticated and 'i30 CE TLS ClientHello sent.' not in result['debug'], result
-        report['aare_profile'] = 'AARE enrollment succeeds; missing AARE pin never falls back to legacy credentials'
+        report['aare_profile'] = ('AARE enrollment succeeds; unknown CA and mismatched pin produce fatal alerts; '
+                                  'missing AARE pin never falls back to legacy credentials')
         if exercise_projection:
             import av
             codec = av.CodecContext.create('libx264', 'w')

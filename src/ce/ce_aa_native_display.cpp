@@ -483,7 +483,10 @@ void handle_touch(CE_HANDLE window, Projection *state, uint32_t message, int32_t
             return;
         }
         switch (button) {
-        case Button::Help: state->guide_page = 1; break;
+        case Button::Help:
+            state->guide_page = 1;
+            OutputDebugStringW(L"i30 native AARE guide opened.\r\n");
+            break;
         case Button::Previous: --state->guide_page; break;
         case Button::Next: ++state->guide_page; break;
         case Button::Close: state->guide_page = 0; break;
@@ -499,10 +502,11 @@ int32_t window_proc(CE_HANDLE window, uint32_t message, uint32_t param, int32_t 
     if (state) {
         if (message == I30_TOUCH_MESSAGE)
             return read_touch(window, state, param);
-        if (message == wm_cancelmode || message == wm_capturechanged) {
+        if (message == wm_cancelmode)
             state->pressed = Button::None;
+        // CE may release pointer capture before delivering a button's ordinary up message.
+        if (message == wm_cancelmode || message == wm_capturechanged)
             reset_touch(state);
-        }
         if (message == wm_paint) {
             ValidateRect(window, nullptr);
             paint_status(window, state);
