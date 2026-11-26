@@ -187,6 +187,7 @@ class GuestExceptions:
         self.consecutive_aborts = 0
         self.prefetch_return = None
         self.vfp_retries = {}
+        self.watch_changed = None
         cpu.hook_add(UC_HOOK_INTR, self.interrupt)
         cpu.hook_add(UC_HOOK_INSN_INVALID, self.invalid_instruction)
 
@@ -260,6 +261,8 @@ class GuestExceptions:
                 event['delivered_vector'] = hx(vector)
                 if not data:
                     self.prefetch_return = (lr & ~1, cpsr & 0x1f, sp)
+                    if self.watch_changed is not None:
+                        self.watch_changed()
                 return
             if self.deliver:
                 event['delivery_stopped'] = 'repeated_abort'
@@ -291,6 +294,8 @@ class GuestExceptions:
             self.repeats[key] += 1
             if event['kind'] == 'vfp_access_trap':
                 self.vfp_retries.setdefault(pc, set()).add((lr, key[2], cpsr & 0x1f))
+                if self.watch_changed is not None:
+                    self.watch_changed()
             vector = exception_entry(cpu, cpsr, pc, vector_offset=4, mode=0x1b, return_offset=4)
             event['delivered_vector'] = hx(vector)
             return True

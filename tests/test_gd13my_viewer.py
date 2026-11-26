@@ -13,12 +13,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 from gd13my_disk_state import persistent_diska
 from gd13my_guest_clock import UTC_PLACEHOLDER
 from gd13my_mmio import MicomCdp, OmapUart, ReadOnlyHsMmc
-from view_gd13my import AppPartitionOverlay, NAVIGATION_MENU_ACK, USB_TEST_READY, USB_TEST_SUCCESS, KernelRun, WindowedRun
+from view_gd13my import AppPartitionOverlay, NAVIGATION_MENU_ACK, USB_TEST_READY, USB_TEST_SUCCESS, WindowedRun
 
 
 class Gd13myWindowInputTests(unittest.TestCase):
     def setUp(self):
         self.run = WindowedRun.__new__(WindowedRun)
+        self.run._native_clock = None
         self.run.menu_button = Event()
         self.run.menu_button.set()
         self.run.menu_sent = None
@@ -56,8 +57,7 @@ class Gd13myWindowInputTests(unittest.TestCase):
         self.run.controls = None
         self.run.display = SimpleNamespace(active=None)
         self.run.next_serial_time = float('inf')
-        with patch.object(KernelRun, 'advance_clock'):
-            self.run.advance_clock(None, 0, 4, None)
+        self.run.poll_devices(None)
         self.assertTrue(self.run.micom.uart.input)
         self.assertEqual(self.run.touch.pending, 1)
 

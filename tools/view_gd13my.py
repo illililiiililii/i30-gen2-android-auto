@@ -323,8 +323,7 @@ class WindowedRun(KernelRun):
         hook = self.cpu.hook_add(UC_HOOK_CODE, calibrate, begin=read_point, end=read_point)
         self.cpu.ctl_flush_tb()
 
-    def advance_clock(self, cpu, address, size, data):
-        super().advance_clock(cpu, address, size, data)
+    def poll_devices(self, cpu):
         if self.clock_units < self.next_poll_units:
             return
         self.next_poll_units = self.clock_units + min(131_072, emulate_gd13my.VIRTUAL_CPU_UNITS_PER_SECOND // 125)

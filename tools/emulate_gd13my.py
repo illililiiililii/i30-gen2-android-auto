@@ -16,6 +16,7 @@ from unicorn.arm_const import (UC_ARM_REG_CPSR, UC_ARM_REG_LR, UC_ARM_REG_PC, UC
                                UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R10, UC_CPU_ARM_CORTEX_A8)
 
 from gd13my_arm import GuestExceptions, cp15, data_access, exception_entry, hx, instruction, translate, word
+from gd13my_block_clock import NO_DEADLINE, install_block_clock
 from gd13my_display import BASE as DSS_BASE, LcdDisplay
 from gd13my_mmio import MMC_BASES, UART3_BASE, DebugUart, OmapSdMa, ReadOnlyHsMmc, boot_devices
 from gd13my_trace import BootTrace
@@ -116,14 +117,15 @@ class KernelRun:
             self.omap_public_rom_sha256 = sha256(omap_public_rom).hexdigest()
         self.layout, self.periphery = layout, periphery
         self.virtual_timer = virtual_timer
-        self.clock_units = 0
+        self._native_clock = None
+        self._clock_units = 0
+        self._service_at = 0
+        self.next_poll_units = None
         self.irq_controller = None
         self.irq_counts = Counter()
         self.irq_poll_at = 0
         self.idle_wakes = 0
         self.idle_blocked = False
-        if virtual_timer or guest_exceptions:
-            self.cpu.hook_add(UC_HOOK_BLOCK, self.advance_clock)
         main = next((w for w in self.windows if w.physical <= self.entry < w.physical + w.size), None)
         if main is None:
             raise ValueError('The OEM table has no window for the kernel entry')
@@ -190,12 +192,46 @@ class KernelRun:
             self.cpu.hook_add(UC_HOOK_CODE, self.ui_entry, (name, expected_pa), begin=address, end=address)
         self.cpu.hook_add(UC_HOOK_MEM_INVALID, self.invalid_memory)
         self.guest_exceptions = GuestExceptions(self.cpu, guest_exceptions)
+        if virtual_timer:
+            self._native_clock = install_block_clock(self.cpu, self.service_block)
+        if self._native_clock is not None:
+            self.guest_exceptions.watch_changed = self.refresh_clock_watch
+        elif virtual_timer or guest_exceptions:
+            self.cpu.hook_add(UC_HOOK_BLOCK, self.advance_clock)
         self.boot_trace = BootTrace(self.cpu, self.rom, read, self.clock_ticks, self.contains_ram) if boot_trace else None
 
     def contains_ram(self, address, length):
         return any(start <= address and address + length <= start + size for start, size in self.ram)
 
+    @property
+    def clock_units(self):
+        clock = self._native_clock
+        return self._clock_units if clock is None else clock.units
+
+    @clock_units.setter
+    def clock_units(self, units):
+        self._service_at = units
+        if self._native_clock is None:
+            self._clock_units = units
+        else:
+            self._native_clock.units = units
+            self._native_clock.service_at = units
+
     def advance_clock(self, cpu, address, size, _data):
+        if self.virtual_timer:
+            self._clock_units += size // 4
+            if self._clock_units < self._service_at:
+                expected = self.guest_exceptions.prefetch_return
+                if (expected is None or address != expected[0]) and not self.guest_exceptions.vfp_retries:
+                    return
+        self.service_block(cpu, address, size, _data)
+
+    def refresh_clock_watch(self):
+        expected = self.guest_exceptions.prefetch_return
+        self._native_clock.prefetch_pc = expected[0] if expected is not None else NO_DEADLINE
+        self._native_clock.watch_vfp = bool(self.guest_exceptions.vfp_retries)
+
+    def service_block(self, cpu, address, size, _data):
         expected = self.guest_exceptions.prefetch_return
         if expected is not None and address == expected[0]:
             self.guest_exceptions.observe_prefetch_return(cpu, address)
@@ -204,7 +240,19 @@ class KernelRun:
             self.guest_exceptions.observe_vfp_retry(cpu, address, size)
         if not self.virtual_timer:
             return
-        self.clock_units += size // 4
+        self.poll_irq(cpu, address)
+        self.poll_devices(cpu)
+        irq = self.irq_poll_at if self.irq_controller is not None else NO_DEADLINE
+        io = self.next_poll_units if self.next_poll_units is not None else NO_DEADLINE
+        self._service_at = min(irq, io)
+        if self._native_clock is not None:
+            self._native_clock.service_at = self._service_at
+            self.refresh_clock_watch()
+
+    def poll_devices(self, cpu):
+        """Allow the windowed runner to service host I/O at its original deadlines."""
+
+    def poll_irq(self, cpu, address):
         intc = self.irq_controller
         if intc is None or self.clock_units < self.irq_poll_at:
             return
@@ -376,7 +424,8 @@ class KernelRun:
         return {'rom_sha256': sha256(self.image).hexdigest(), 'omap_public_rom_sha256': self.omap_public_rom_sha256,
                 'layout': self.layout, 'periphery': self.periphery,
                 'limits': {'instructions': instructions, 'seconds': seconds},
-                'timer': {'virtual_units_per_second': VIRTUAL_CPU_UNITS_PER_SECOND, 'timer_hz': TIMER_HZ}
+                'timer': {'virtual_units_per_second': VIRTUAL_CPU_UNITS_PER_SECOND, 'timer_hz': TIMER_HZ,
+                          'block_clock': 'native' if self._native_clock is not None else 'python'}
                 if self.virtual_timer else 'step_per_read',
                 'bin_entry_pa': hx(self.entry), 'oem_table_va': hx(self.table),
                 'oem_windows': [window.report() for window in self.windows],
