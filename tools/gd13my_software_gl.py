@@ -1,6 +1,7 @@
-"""Render the stock GDdNavi OpenGL ES calls with Windows bitmap OpenGL."""
+"""Render stock GDdNavi OpenGL ES calls through host WGL or the bitmap fallback."""
 
 import ctypes as C
+import os
 from ctypes import wintypes as W
 from struct import iter_unpack, pack, pack_into, unpack
 from time import monotonic
@@ -131,59 +132,147 @@ class PFD(C.Structure):
 class BitmapGL:
     def __init__(self):
         self.gdi, self.dll = C.WinDLL("gdi32"), C.WinDLL("opengl32")
-        self.dc = self.surface = self.ctx = self.previous = None
+        self.user = C.WinDLL("user32", use_last_error=True)
+        self.dc = self.surface = self.ctx = self.previous = self.window = None
+        self.window_class = None
+        self.window_proc = None
+        self.backend = "software"
+        self.vendor = self.renderer = self.version = "unknown"
         try:
-            self.dc = api(self.gdi, "CreateCompatibleDC", W.HDC, W.HDC)(None)
-            if not self.dc:
-                raise RuntimeError("Win32 could not create the OpenGL memory DC")
-            info = pack(
-                "<IiiHHIIiiII",
-                40,
-                GLES_WIDTH,
-                GLES_HEIGHT,
-                1,
-                32,
-                0,
-                GLES_WIDTH * GLES_HEIGHT * 4,
-                0,
-                0,
-                0,
-                0,
-            )
-            bits = P()
-            self.surface = api(
-                self.gdi,
-                "CreateDIBSection",
-                W.HBITMAP,
-                W.HDC,
-                P,
-                U,
-                C.POINTER(P),
-                W.HANDLE,
-                U,
-            )(self.dc, info, 0, C.byref(bits), None, 0)
-            self.select = api(self.gdi, "SelectObject", W.HGDIOBJ, W.HDC, W.HGDIOBJ)
-            self.previous = self.select(self.dc, self.surface) if self.surface else None
-            if not self.previous:
-                raise RuntimeError("Win32 could not select the OpenGL bitmap")
-            desc = PFD()
-            desc.size, desc.version = C.sizeof(PFD), 1
-            desc.flags, desc.color, desc.depth, desc.stencil = 0x28, 32, 24, 8
-            choose = api(self.gdi, "ChoosePixelFormat", I, W.HDC, C.POINTER(PFD))
-            selected = choose(self.dc, C.byref(desc))
-            if not selected or not api(
-                self.gdi, "SetPixelFormat", W.BOOL, W.HDC, I, C.POINTER(PFD)
-            )(self.dc, selected, C.byref(desc)):
-                raise RuntimeError("Win32 bitmap OpenGL pixel format unavailable")
-            self.ctx = api(self.dll, "wglCreateContext", W.HANDLE, W.HDC)(self.dc)
-            self.current = api(self.dll, "wglMakeCurrent", W.BOOL, W.HDC, W.HANDLE)
-            if not self.ctx or not self.current(self.dc, self.ctx):
-                raise RuntimeError("Win32 bitmap OpenGL context unavailable")
-            self.call("glPixelStorei", None, "ui", 0x0CF5, 1)
-            self.call("glPixelStorei", None, "ui", 0x0D05, 1)
+            requested = os.environ.get("GD13MY_GL_BACKEND", "software").casefold()
+            if requested not in ("auto", "hardware", "software"):
+                raise ValueError("GD13MY_GL_BACKEND must be auto, hardware, or software")
+            if requested != "software":
+                try:
+                    self._init_window()
+                    self._identify_renderer()
+                    if self.backend == "hardware":
+                        return
+                    self.close()
+                    self.__init_software()
+                except (AttributeError, C.ArgumentError, OSError, RuntimeError):
+                    self.close()
+                    if requested == "hardware":
+                        raise
+                    self.__init_software()
+            else:
+                self.__init_software()
+            self._identify_renderer()
+            if requested == "hardware" and self.backend != "hardware":
+                raise RuntimeError(f"Hardware OpenGL unavailable ({self.renderer})")
         except Exception:
             self.close()
             raise
+
+    def __init_software(self):
+        self.dc = api(self.gdi, "CreateCompatibleDC", W.HDC, W.HDC)(None)
+        if not self.dc:
+            raise RuntimeError("Win32 could not create the OpenGL memory DC")
+        info = pack(
+            "<IiiHHIIiiII",
+            40,
+            GLES_WIDTH,
+            GLES_HEIGHT,
+            1,
+            32,
+            0,
+            GLES_WIDTH * GLES_HEIGHT * 4,
+            0,
+            0,
+            0,
+            0,
+        )
+        bits = P()
+        self.surface = api(
+            self.gdi,
+            "CreateDIBSection",
+            W.HBITMAP,
+            W.HDC,
+            P,
+            U,
+            C.POINTER(P),
+            W.HANDLE,
+            U,
+        )(self.dc, info, 0, C.byref(bits), None, 0)
+        self.select = api(self.gdi, "SelectObject", W.HGDIOBJ, W.HDC, W.HGDIOBJ)
+        self.previous = self.select(self.dc, self.surface) if self.surface else None
+        if not self.previous:
+            raise RuntimeError("Win32 could not select the OpenGL bitmap")
+        desc = PFD()
+        desc.size, desc.version = C.sizeof(PFD), 1
+        desc.flags, desc.color, desc.depth, desc.stencil = 0x28, 32, 24, 8
+        choose = api(self.gdi, "ChoosePixelFormat", I, W.HDC, C.POINTER(PFD))
+        selected = choose(self.dc, C.byref(desc))
+        if not selected or not api(
+            self.gdi, "SetPixelFormat", W.BOOL, W.HDC, I, C.POINTER(PFD)
+        )(self.dc, selected, C.byref(desc)):
+            raise RuntimeError("Win32 bitmap OpenGL pixel format unavailable")
+        self.ctx = api(self.dll, "wglCreateContext", W.HANDLE, W.HDC)(self.dc)
+        self.current = api(self.dll, "wglMakeCurrent", W.BOOL, W.HDC, W.HANDLE)
+        if not self.ctx or not self.current(self.dc, self.ctx):
+            raise RuntimeError("Win32 bitmap OpenGL context unavailable")
+        self.backend = "software"
+        self.call("glPixelStorei", None, "ui", 0x0CF5, 1)
+        self.call("glPixelStorei", None, "ui", 0x0D05, 1)
+
+    def _init_window(self):
+        class WNDCLASS(C.Structure):
+            _fields_ = (("style", U), ("procedure", P), ("class_extra", I),
+                        ("window_extra", I), ("instance", W.HINSTANCE), ("icon", W.HICON),
+                        ("cursor", W.HCURSOR), ("background", W.HBRUSH),
+                        ("menu_name", W.LPCWSTR), ("class_name", W.LPCWSTR))
+
+        result = C.c_ssize_t
+        self.user.DefWindowProcW.restype = result
+        self.user.DefWindowProcW.argtypes = (W.HWND, U, W.WPARAM, W.LPARAM)
+        self.window_proc = C.WINFUNCTYPE(result, W.HWND, U, W.WPARAM, W.LPARAM)(
+            self.user.DefWindowProcW
+        )
+        kernel = C.WinDLL("kernel32")
+        instance = api(kernel, "GetModuleHandleW", W.HINSTANCE, W.LPCWSTR)(None)
+        self.window_class = f"GD13MYHiddenWGL-{id(self):x}"
+        descriptor = WNDCLASS(0x20, C.cast(self.window_proc, P), 0, 0, instance,
+                              None, None, None, None, self.window_class)
+        register = api(self.user, "RegisterClassW", W.WORD, C.POINTER(WNDCLASS))
+        if not register(C.byref(descriptor)):
+            raise OSError(C.get_last_error(), "RegisterClassW failed")
+        create = api(self.user, "CreateWindowExW", W.HWND, U, W.LPCWSTR, W.LPCWSTR, U,
+                     I, I, I, I, W.HWND, W.HMENU, W.HINSTANCE, P)
+        self.window = create(0, self.window_class, "", 0x80000000, 0, 0,
+                             GLES_WIDTH, GLES_HEIGHT, None, None, instance, None)
+        if not self.window:
+            raise OSError(C.get_last_error(), "Could not create hidden OpenGL window")
+        self.dc = api(self.user, "GetDC", W.HDC, W.HWND)(self.window)
+        if not self.dc:
+            raise OSError(C.get_last_error(), "GetDC failed for hidden OpenGL window")
+        desc = PFD()
+        desc.size, desc.version = C.sizeof(PFD), 1
+        desc.flags, desc.type, desc.color, desc.depth, desc.stencil = 0x24, 0, 32, 24, 8
+        choose = api(self.gdi, "ChoosePixelFormat", I, W.HDC, C.POINTER(PFD))
+        selected = choose(self.dc, C.byref(desc))
+        set_pixel = api(self.gdi, "SetPixelFormat", W.BOOL, W.HDC, I, C.POINTER(PFD))
+        if not selected or not set_pixel(self.dc, selected, C.byref(desc)):
+            raise RuntimeError("Window OpenGL pixel format unavailable")
+        self.ctx = api(self.dll, "wglCreateContext", W.HANDLE, W.HDC)(self.dc)
+        self.current = api(self.dll, "wglMakeCurrent", W.BOOL, W.HDC, W.HANDLE)
+        if not self.ctx or not self.current(self.dc, self.ctx):
+            raise RuntimeError("Window OpenGL context unavailable")
+        self.backend = "window"
+        self.call("glPixelStorei", None, "ui", 0x0CF5, 1)
+        self.call("glPixelStorei", None, "ui", 0x0D05, 1)
+
+    def _identify_renderer(self):
+        def query(name, enum):
+            value = self.call("glGetString", C.c_char_p, "u", enum)
+            return value.decode("ascii", "replace") if value else "unknown"
+
+        self.vendor = query("vendor", 0x1F00)
+        self.renderer = query("renderer", 0x1F01)
+        self.version = query("version", 0x1F02)
+        identity = f"{self.vendor} {self.renderer}".casefold()
+        self.backend = "software" if any(
+            marker in identity for marker in ("gdi generic", "basic render", "llvmpipe", "swiftshader")
+        ) else "hardware" if any(marker in identity for marker in ("intel", "nvidia", "amd", "radeon")) else "unknown"
 
     def call(self, name, result, form, *args):
         f = api(
@@ -208,14 +297,27 @@ class BitmapGL:
                 self.current(None, None)
             api(self.dll, "wglDeleteContext", W.BOOL, W.HANDLE)(self.ctx)
             self.ctx = None
-        if self.previous:
+        if self.previous and self.dc:
             self.select(self.dc, self.previous)
         if self.surface:
             api(self.gdi, "DeleteObject", W.BOOL, W.HGDIOBJ)(self.surface)
             self.surface = None
         if self.dc:
-            api(self.gdi, "DeleteDC", W.BOOL, W.HDC)(self.dc)
+            if self.window:
+                api(self.user, "ReleaseDC", I, W.HWND, W.HDC)(self.window, self.dc)
+            else:
+                api(self.gdi, "DeleteDC", W.BOOL, W.HDC)(self.dc)
             self.dc = None
+        if self.window:
+            api(self.user, "DestroyWindow", W.BOOL, W.HWND)(self.window)
+            self.window = None
+        if self.window_class:
+            kernel = C.WinDLL("kernel32")
+            instance = api(kernel, "GetModuleHandleW", W.HINSTANCE, W.LPCWSTR)(None)
+            api(self.user, "UnregisterClassW", W.BOOL, W.LPCWSTR, W.HINSTANCE)(
+                self.window_class, instance
+            )
+            self.window_class = None
 
 
 def thunks(path):
@@ -545,6 +647,8 @@ class GuestGL:
         if ordinal == 17:
             if not self.gl:
                 self.gl = BitmapGL()
+                self.note("host OpenGL", self.gl.backend, self.gl.vendor,
+                          self.gl.renderer, self.gl.version)
             self.u32(args[1], 1)
             self.u32(args[2], 1)
             return 1
@@ -606,6 +710,10 @@ class GuestGL:
 
     def map_report(self):
         return {
+            "host_gl_backend": self.gl.backend if self.gl else None,
+            "host_gl_vendor": self.gl.vendor if self.gl else None,
+            "host_gl_renderer": self.gl.renderer if self.gl else None,
+            "host_gl_version": self.gl.version if self.gl else None,
             "guest_swaps": self.swaps,
             "guest_swaps_after_ready": self.ready_swaps,
             "video_plane_copies": self.map_copies,
