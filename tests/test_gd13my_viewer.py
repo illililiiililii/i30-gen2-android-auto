@@ -28,6 +28,7 @@ class Gd13myWindowInputTests(unittest.TestCase):
         self.run.messages = SimpleQueue()
         self.run.micom = MicomCdp(OmapUart())
         self.run.uart = SimpleNamespace(output=bytearray(NAVIGATION_MENU_ACK))
+        self.run.lcd_blit_offset = self.run.lcd_blit_serial_length = 0
 
     def test_early_menu_request_waits_for_navigation_and_a_fresh_ack(self):
         self.run.service_menu_button(1)

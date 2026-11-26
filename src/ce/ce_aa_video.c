@@ -88,10 +88,12 @@ static int paint(I30Video *video, const I30VideoTarget *target)
     CE_HANDLE dc = target->begin(target->context);
     if (!dc)
         return 0;
+    OutputDebugStringW(L"i30 LCD blit begin\r\n");
     int painted = StretchDIBits(dc, 0, 0, I30_VIDEO_WIDTH, I30_VIDEO_HEIGHT,
                                 (int)left, (int)top, (int)width, (int)height,
                                 pixels, &info, 0, 0x00cc0020U);
     target->end(target->context, dc);
+    OutputDebugStringW(L"i30 LCD blit end\r\n");
     return painted > 0 ? 1 : -1;
 }
 

@@ -57,16 +57,25 @@ class PhonePort:
         self.version_input = self.version_packet = None
 
     def close_device(self):
-        self.reset()
-        if self.bulk_reader is not None:
-            self.bulk_reader.shutdown()
-            self.bulk_reader = None
-        if self.link is not None:
-            self.link.close()
-        if self.raw is not None and (self.link is None or self.raw is not self.link.device):
-            self.backend.dispose(self.raw)
+        raw, link = self.raw, self.link
         self.device = self.raw = self.link = None
         self.controller.set_cable(False)
+        self.reset()
+        if self.bulk_reader is not None:
+            self.bulk_reader.shutdown(cancel_futures=True)
+            self.bulk_reader = None
+        try:
+            if link is not None:
+                link.close()
+        finally:
+            if raw is not None and (link is None or raw is not link.device):
+                self.backend.dispose(raw)
+
+    def shutdown(self):
+        self.next_poll = float('inf')
+        self.close_device()
+        self.backend.inventory.clear()
+        self.trace('물리 USB 세션 종료 · 읽기 작업 및 핸들 반환')
 
     def reconnect(self):
         self.close_device()
@@ -80,8 +89,7 @@ class PhonePort:
             return None
         claimed = self.link, self.version_packet
         self.device = self.raw = self.link = None
-        self.reset()
-        self.controller.set_cable(False)
+        self.close_device()
         self.next_poll = float('inf')
         return claimed
 
@@ -93,6 +101,7 @@ class PhonePort:
                 return self.controller.retry_bulk_reads()
             return False
         self.next_poll = now + 0.25
+        stage = '장치 열거'
         try:
             devices = self.backend.devices()
             if self.port == 'auto':
@@ -118,6 +127,7 @@ class PhonePort:
                 self.notify(f'USB {self.port} · 지원 대상 외 기기')
                 return False
             raw = self.backend.get_device(candidate)
+            stage = f'{candidate.vendor:04x}:{candidate.product:04x} 구성 조회'
             try:
                 config = self.backend.active_configuration(raw)
                 if any(item.bInterfaceClass == 8 for item in config):
@@ -133,7 +143,11 @@ class PhonePort:
                 raise TransportError('Unsupported endpoint zero packet size')
             # A newly enumerated accessory can still be waiting for WinUSB.
             # Keep the guest disconnected until the data interface is usable.
-            link = self.backend.open_accessory(candidate, raw=raw) if candidate.accessory else None
+            if candidate.accessory:
+                stage = f'{candidate.vendor:04x}:{candidate.product:04x} 액세서리 인터페이스'
+                link = self.backend.open_accessory(candidate, raw=raw)
+            else:
+                link = None
             self.device, self.raw, self.link = candidate, raw, link
             self.port = candidate.port
             self.active_config = config.bConfigurationValue
@@ -142,7 +156,9 @@ class PhonePort:
             self.notify(f'물리 USB {self.port} · {candidate.vendor:04x}:{candidate.product:04x} 가상 포트 연결')
             return True
         except TransportError as error:
-            self.notify(f'Windows USB 접근 실패 · {error}')
+            hint = (' · ADB 등 같은 장치를 사용 중인 프로그램을 확인하세요'
+                    if getattr(error.__cause__, 'backend_error_code', None) == -3 else '')
+            self.notify(f'Windows USB 접근 실패 · {stage} · {error}{hint}')
             return False
 
     def exchange(self, label, function, *args, **kwargs):

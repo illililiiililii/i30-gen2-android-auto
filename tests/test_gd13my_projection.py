@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 from gd13my_projection import Projection, ProjectionSurface
 from gd13my_musb import UsbTransferPending
 from gd13my_usb_pc import PhonePort, VERSION_REQUEST
+from view_gd13my import WindowedRun
 from i30_receiver.audio import AudioMixer, Microphone
 from i30_receiver.cli import openssl_path
 from i30_receiver.mock import (ACCESSORY, MockCapture, MockPlayback, MockUsb, PORT, VirtualClock,
@@ -59,7 +60,7 @@ class Gd13myProjectionTests(unittest.TestCase):
         port.link, port.controller, port.notify, port.trace = Mock(), Mock(), Mock(), Mock()
         port.device, port.raw, port.config = Mock(), port.link.device, 1
         port.link.input_endpoint, port.link.output_endpoint = 0x81, 0x01
-        port.bulk_input = None
+        port.bulk_reader = port.bulk_input = None
         port.exchange = Mock(return_value=len(VERSION_REQUEST))
         port.read_bulk_packet = Mock(side_effect=(VERSION_RESPONSE[:7], VERSION_RESPONSE[7:]))
         port.write(0x01, VERSION_REQUEST)
@@ -95,6 +96,53 @@ class Gd13myProjectionTests(unittest.TestCase):
         finally:
             ready.set()
             port.bulk_reader.shutdown()
+
+    def test_five_ignition_shutdowns_release_the_interface_before_reopen(self):
+        from concurrent.futures import ThreadPoolExecutor
+
+        physical = Mock()
+        for _ in range(5):
+            port = PhonePort.__new__(PhonePort)
+            port.device, port.raw, port.link = Mock(), physical, Mock(device=physical)
+            port.controller, port.backend, port.trace = Mock(), Mock(inventory={1: physical}), Mock()
+            port.bulk_reader = ThreadPoolExecutor(max_workers=1)
+            pending = port.bulk_reader.submit(lambda: b'')
+            port.bulk_input = pending
+            port.link.close.side_effect = lambda: self.assertTrue(pending.done())
+            link = port.link
+            port.shutdown()
+            self.assertIsNone(port.bulk_reader)
+            self.assertIsNone(port.raw)
+            self.assertIsNone(port.link)
+            self.assertIsNone(port.bulk_input)
+            self.assertFalse(port.backend.inventory)
+            self.assertEqual(port.next_poll, float('inf'))
+            link.close.assert_called_once()
+            port.backend.dispose.assert_not_called()
+            port.controller.set_cable.assert_called_once_with(False)
+
+    def test_lcd_capture_waits_for_the_complete_guest_blit(self):
+        run = WindowedRun.__new__(WindowedRun)
+        run.uart = Mock(output=bytearray(b'i30 LCD blit begin\r\n'), trace_limit=1024)
+        run.lcd_blit_offset = 0
+        run.lcd_blit_serial_length = 0
+        run.lcd_blit_active = False
+        run.lcd_blit_started = None
+        run.boot_started = 0
+        run.lcd_blits = {'completed': 0, 'deferred_polls': 0, 'sampled_wall_seconds': 0.0}
+        run.cpu, run.display = Mock(), Mock()
+        run.display.capture_rgb.return_value = ({}, None)
+        run.navigation_ready = True
+        run.lcd_stats = {'ready': {'polls': 0, 'capture_seconds': 0.0}}
+        run.publish_frame()
+        run.uart.output.extend(b'i30 LCD blit en')
+        run.publish_frame()
+        run.display.capture_rgb.assert_not_called()
+        run.uart.output.extend(b'd\r\n')
+        run.publish_frame()
+        run.display.capture_rgb.assert_called_once()
+        self.assertEqual(run.lcd_blits['deferred_polls'], 2)
+        self.assertEqual(run.lcd_blits['completed'], 1)
 
     @unittest.skipUnless(av and openssl_path(), 'Requires local PyAV and OpenSSL')
     def test_usb_handoff_completes_tls_video_input_audio_and_stock_priority(self):

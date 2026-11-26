@@ -242,6 +242,7 @@ def main():
         'timer': report.get('timer'),
         'stock_map': report.get('stock_map'),
         'lcd_capture': report.get('lcd_capture'),
+        'lcd_blits': report.get('lcd_blits'),
         'ready_guest_seconds': round(ready_guest_seconds, 3) if ready_guest_seconds is not None else None,
         'ready_guest_seconds_per_wall_second': (round(ready_guest_seconds / ready_wall_seconds, 3)
                                                 if ready_guest_seconds is not None and ready_wall_seconds else None),

@@ -69,6 +69,7 @@ USB_AUTH_STATUS = {
 }
 USB_MARKERS = (USB_TEST_READY, USB_TEST_SUCCESS, USB_TEST_FAILURE, *USB_AUTH_STATUS)
 USB_TEST_EVENT = re.compile(b'|'.join(re.escape(marker) for marker in USB_MARKERS))
+LCD_BLIT_EVENT = re.compile(rb'i30 LCD blit (begin|end)\r*\n')
 USB_TEST_TAIL = max(map(len, USB_MARKERS)) - 1
 NAVIGATION_KEYS = {
     'position': (b'\x60\x02\x1f\x01', '현위치'),
@@ -175,6 +176,11 @@ class WindowedRun(KernelRun):
         self.last_frame = None
         self.last_frame_size = None
         self.live_png = live_png
+        self.lcd_blit_offset = 0
+        self.lcd_blit_serial_length = 0
+        self.lcd_blit_active = False
+        self.lcd_blit_started = None
+        self.lcd_blits = {'completed': 0, 'deferred_polls': 0, 'sampled_wall_seconds': 0.0}
         self.ready_ticks = None
         self.lcd_stats = {
             phase: {'polls': 0, 'frames': 0, 'capture_seconds': 0.0}
@@ -347,6 +353,7 @@ class WindowedRun(KernelRun):
             if sample is not None:
                 self.submit_input(sample, ticks)
         now = monotonic()
+        self.observe_lcd_blit(now)
         self.service_panel()
         if self.phone_port is not None:
             self.phone_port.poll()
@@ -421,8 +428,33 @@ class WindowedRun(KernelRun):
                 serial.write(self.uart.output[self.serial_length:])
             self.serial_length = len(self.uart.output)
 
+    def observe_lcd_blit(self, started):
+        serial = self.uart.output
+        if len(serial) == self.lcd_blit_serial_length:
+            return
+        self.lcd_blit_serial_length = len(serial)
+        for marker in LCD_BLIT_EVENT.finditer(serial, self.lcd_blit_offset):
+            self.lcd_blit_active = marker[1] == b'begin'
+            if self.lcd_blit_active:
+                self.lcd_blit_started = started
+            elif self.lcd_blit_started is not None:
+                self.lcd_blits['completed'] += 1
+                self.lcd_blits['sampled_wall_seconds'] += started - self.lcd_blit_started
+                completed_at = started - self.boot_started
+                self.lcd_blits.setdefault('first_completion', completed_at)
+                self.lcd_blits['last_completion'] = completed_at
+                self.lcd_blit_started = None
+                self.next_frame_time = min(self.next_frame_time, started)
+            self.lcd_blit_offset = marker.end()
+        self.lcd_blit_offset = max(self.lcd_blit_offset, len(serial) - 24)
+
     def publish_frame(self):
         started = monotonic()
+        self.observe_lcd_blit(started)
+        if self.lcd_blit_active and len(self.uart.output) < self.uart.trace_limit:
+            self.lcd_blits['deferred_polls'] += 1
+            self.next_frame_time = started + 1 / 30
+            return
         report, frame = self.display.capture_rgb(self.cpu.mem_read, self.contains_ram)
         capture_seconds = monotonic() - started
         stats = self.lcd_stats['ready' if self.navigation_ready else 'boot']
@@ -511,12 +543,18 @@ def boot(image, disk, seconds, messages, pointer, menu_button, closing, output, 
                 try:
                     report = run.run_window(seconds)
                 finally:
-                    if renderer is not None:
-                        renderer.close()
+                    try:
+                        if phone_port is not None:
+                            port, phone_port = phone_port, None
+                            port.shutdown()
+                    finally:
+                        if renderer is not None:
+                            renderer.close()
                 report['touch'] = {'samples': run.touch.consumed, 'last_reply': hex(run.touch.last_reply),
                                    'commands': {hex(word): count for word, count in run.touch.commands.items()}}
                 report['wall_seconds_from_guest_init'] = run.boot_timings
                 report['lcd_capture'] = run.lcd_stats
+                report['lcd_blits'] = run.lcd_blits
                 report['ready_clock_ticks'] = run.ready_ticks
                 if not live_png:
                     run.save_lcd_snapshot()
@@ -533,10 +571,12 @@ def boot(image, disk, seconds, messages, pointer, menu_button, closing, output, 
     except (ImportError, OSError, ValueError) as error:
         messages.put(('error', str(error)))
     finally:
-        if projection is not None:
-            projection.close()
-        if phone_port is not None:
-            phone_port.close_device()
+        try:
+            if phone_port is not None:
+                phone_port.shutdown()
+        finally:
+            if projection is not None:
+                projection.close()
 
 
 def main():
