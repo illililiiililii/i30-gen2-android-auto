@@ -5,8 +5,14 @@ from os import environ
 from pathlib import Path
 
 from unicorn import UC_HOOK_BLOCK, UcError
+from unicorn.unicorn_py3.unicorn import MMIO_READ_CFUNC
 NO_DEADLINE = (1 << 64) - 1
 BLOCK_HOOK = CFUNCTYPE(None, c_void_p, c_uint64, c_uint32, c_void_p)
+
+
+class MmcFifo(Structure):
+    _fields_ = [('payload', c_void_p), ('length', c_uint64), ('position', c_uint64),
+                ('words_read', c_uint64), ('read', MMIO_READ_CFUNC)]
 
 
 class BlockClock(Structure):
@@ -31,6 +37,28 @@ class BlockClock(Structure):
         if status:
             raise UcError(status)
         cpu._callbacks[handle.value] = self
+
+    def map_mmc(self, cpu, base, size, read, write, target):
+        from unicorn.unicorn_py3.unicorn import MMIO_WRITE_CFUNC, uccallback, uclib
+
+        if not hasattr(self.library, 'gd13my_mmc_read'):
+            return None
+        fifo = MmcFifo()
+
+        @uccallback(cpu, MMIO_READ_CFUNC)
+        def read_cb(engine, offset, width, _):
+            return read(engine, offset, width, target)
+
+        @uccallback(cpu, MMIO_WRITE_CFUNC)
+        def write_cb(engine, offset, width, value, _):
+            write(engine, offset, width, value, target)
+
+        fifo.read = read_cb
+        status = uclib.uc_mmio_map(cpu._uch, base, size, self.library.gd13my_mmc_read, byref(fifo), write_cb, None)
+        if status:
+            raise UcError(status)
+        cpu._mmio_callbacks[base, base + size] = (read_cb, write_cb)
+        return fifo
 
 
 def install_block_clock(cpu, service):

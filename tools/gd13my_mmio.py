@@ -11,6 +11,7 @@ PAGE = 0x1000
 UART3_BASE = 0x49020000
 MMC_BASES = (0x4809c000, 0x480b4000, 0x480ad000)
 MMC_IRQS = (83, 86, 94)
+READ_U32 = struct.Struct('<I').unpack_from
 
 
 class RegisterBank:
@@ -281,7 +282,7 @@ class EmptyMcSpi(ResetBank):
         self.touch = touch
 
     def irq_pending(self):
-        return bool(self.read(0x18, 4) & self.read(0x1c, 4))
+        return bool(READ_U32(self.data, 0x18)[0] & READ_U32(self.data, 0x1c)[0])
 
     def read(self, offset, size):
         value = super().read(offset, size)
@@ -354,7 +355,13 @@ class OmapGpio(ResetBank):
         super().write(offset, size, value)
 
     def irq_pending(self):
-        return bool(self.read(0x18, 4) & self.read(0x1c, 4))
+        data = self.data
+        enabled = READ_U32(data, 0x1c)[0]
+        if enabled & READ_U32(data, 0x18)[0]:
+            return True
+        pins = enabled & self.attached_pins
+        return bool(pins and (pins & ((~self.inputs & READ_U32(data, 0x40)[0]) |
+                                     (self.inputs & READ_U32(data, 0x44)[0]))))
 
 
 class TouchController:
@@ -426,7 +433,7 @@ class GpTimer(ResetBank):
         self.previous = 0
 
     def counter(self):
-        count = super().read(0x28, 4)
+        count = READ_U32(self.data, 0x28)[0]
         if self.epoch is not None:
             count += self.clock() - self.epoch
         return count & 0xffffffff
@@ -459,12 +466,15 @@ class GpTimer(ResetBank):
 
     def irq_pending(self):
         count = self.counter()
-        elapsed = (count - self.previous) & 0xffffffff
-        distance = (self.read(0x38, 4) - self.previous) & 0xffffffff
-        if self.data[0x24] & 0x41 == 0x41 and 0 < distance <= elapsed:
-            super().write(0x18, 4, self.read(0x18, 4) | 1)
+        previous = self.previous
+        elapsed = (count - previous) & 0xffffffff
         self.previous = count
-        return bool(self.read(0x18, 4) & self.read(0x1c, 4) & 1)
+        data = self.data
+        if data[0x24] & 0x41 == 0x41:
+            distance = (READ_U32(data, 0x38)[0] - previous) & 0xffffffff
+            if 0 < distance <= elapsed:
+                data[0x18] |= 1
+        return bool(data[0x18] & data[0x1c] & 1)
 
     def ticks_to_match(self):
         if self.epoch is not None and (self.data[0x24] & 0x41) == 0x41 and self.data[0x1c] & 1:
@@ -481,6 +491,7 @@ class OmapIntc(ResetBank):
         self.sources = sources
         self.masks = [0xffffffff] * 3
         self.active = None
+        self._irq_checks = None
 
     def read(self, offset, size):
         if offset == 0x40:
@@ -498,18 +509,32 @@ class OmapIntc(ResetBank):
             bank, register = divmod(offset - 0x80, 0x20)
             if register == 4:
                 self.masks[bank] = value
+                self._irq_checks = None
             elif register == 8:
                 self.masks[bank] &= ~value
+                self._irq_checks = None
             elif register == 0xc:
                 self.masks[bank] |= value
+                self._irq_checks = None
         elif offset == 0x10 and value & 2:
             self.masks[:], self.active = [0xffffffff] * 3, None
+            self._irq_checks = None
         elif offset == 0x48 and value & 1:
             self.active = None
+        elif offset < 0x280 and offset + size > 0x100:
+            self._irq_checks = None
         super().write(offset, size, value)
 
     def pending(self):
-        return [irq for irq, source in self.sources.items() if source.irq_pending() and self.routes_irq(irq)]
+        if self._irq_checks is None:
+            checks = []
+            for irq, source in self.sources.items():
+                routed = self.routes_irq(irq)
+                # A timer match latches even while the interrupt is masked.
+                if routed or isinstance(source, GpTimer):
+                    checks.append((irq, source.irq_pending, routed))
+            self._irq_checks = checks
+        return [irq for irq, pending, routed in self._irq_checks if pending() and routed]
 
     def routes_irq(self, irq):
         return not self.masks[irq // 32] & (1 << (irq % 32)) and not self.read(0x100 + 4 * irq, 4) & 1
@@ -548,7 +573,8 @@ class ReadOnlyHsMmc(EmptyHsMmc):
             raise ValueError('MMC image must contain a whole number of 512-byte sectors')
         self.commands = Counter()
         self.read_requests = deque(maxlen=32)
-        self.bytes_read = 0
+        self.fifo = None
+        self._bytes_read = 0
         self.writable_lbas = writable_lbas
         self.overlay = {}
         self.write_lba = None
@@ -558,6 +584,41 @@ class ReadOnlyHsMmc(EmptyHsMmc):
         self.rca = 0
         self.state = 0
         self.dma_enabled = False
+
+    @property
+    def bytes_read(self):
+        return self._bytes_read + (4 * self.fifo.words_read if self.fifo is not None else 0)
+
+    def attach_fifo(self, fifo):
+        position, data = self.position, self.payload
+        self._bytes_read = self.bytes_read
+        self.fifo = fifo
+        self.position, self.payload = position, data
+
+    @property
+    def position(self):
+        return self.fifo.position if self.fifo is not None else self._position
+
+    @position.setter
+    def position(self, value):
+        if self.fifo is not None:
+            self.fifo.position = value
+        else:
+            self._position = value
+
+    @property
+    def payload(self):
+        return self._payload
+
+    @payload.setter
+    def payload(self, data):
+        if self.fifo is not None:
+            from ctypes import c_char_p, cast, c_void_p
+
+            data = bytes(data)
+            self.fifo.payload = cast(c_char_p(data), c_void_p).value
+            self.fifo.length = len(data)
+        self._payload = data
 
     def set_status(self, bits):
         RegisterBank.write(self, 0x130, 4, self.read(0x130, 4) | bits)
@@ -580,7 +641,7 @@ class ReadOnlyHsMmc(EmptyHsMmc):
     def read_data(self, size):
         data = self.payload[self.position:self.position + size]
         self.position += len(data)
-        self.bytes_read += len(data)
+        self._bytes_read += len(data)
         if self.position == len(self.payload):
             self.payload = b''
             self.set_status(self.TC)
@@ -703,7 +764,9 @@ class SdMaIrq:
         self.dma, self.line = dma, line
 
     def irq_pending(self):
-        return bool(self.dma.read(0x08 + 4 * self.line, 4) & self.dma.read(0x18 + 4 * self.line, 4))
+        data = self.dma.data
+        offset = 4 * self.line
+        return bool(READ_U32(data, 0x08 + offset)[0] & READ_U32(data, 0x18 + offset)[0])
 
 
 class OmapSdMa(ResetBank):

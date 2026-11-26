@@ -175,9 +175,6 @@ class KernelRun:
         else:
             devices = {UART3_BASE: ('UART3', self.uart)}
         self.devices = {name: {'physical': hx(base), 'reads': 0, 'writes': 0} for base, (name, _) in devices.items()}
-        for base, (name, bank) in devices.items():
-            target = (base, name, bank)
-            self.cpu.mmio_map(base, len(bank.data), self.read_mmio, target, self.write_mmio, target)
 
         self.events = {}
         self.ui_entries = dict.fromkeys(sorted(UI_MODULES))
@@ -201,6 +198,15 @@ class KernelRun:
             self.guest_exceptions.watch_changed = self.refresh_clock_watch
         elif virtual_timer or guest_exceptions:
             self.cpu.hook_add(UC_HOOK_BLOCK, self.advance_clock)
+        for base, (name, bank) in devices.items():
+            target = (base, name, bank)
+            if self._native_clock is not None and bank is card:
+                fifo = self._native_clock.map_mmc(self.cpu, base, len(bank.data), self.read_mmio,
+                                                  self.write_mmio, target)
+                if fifo is not None:
+                    bank.attach_fifo(fifo)
+                    continue
+            self.cpu.mmio_map(base, len(bank.data), self.read_mmio, target, self.write_mmio, target)
         self.boot_trace = BootTrace(self.cpu, self.rom, read, self.clock_ticks, self.contains_ram) if boot_trace else None
 
     def contains_ram(self, address, length):
@@ -244,7 +250,8 @@ class KernelRun:
         if not self.virtual_timer:
             return
         self.poll_irq(cpu, address)
-        self.poll_devices(cpu)
+        if self.next_poll_units is not None and self.clock_units >= self.next_poll_units:
+            self.poll_devices(cpu)
         irq = self.irq_poll_at if self.irq_controller is not None else NO_DEADLINE
         io = self.next_poll_units if self.next_poll_units is not None else NO_DEADLINE
         self._service_at = min(irq, io)
@@ -407,6 +414,14 @@ class KernelRun:
                 if entry is None:
                     error = str(exc)
                     break
+        read_counts, mmio_devices = self.read_counts, self.devices
+        if self.card is not None and self.card.fifo is not None:
+            device, base = f'HSMMC{self.slot}', MMC_BASES[self.slot - 1]
+            fast_reads = self.card.fifo.words_read
+            read_counts = self.read_counts.copy()
+            read_counts[base + 0x120] += fast_reads
+            mmio_devices = self.devices | {device: self.devices[device] | {
+                'reads': self.devices[device]['reads'] + fast_reads}}
         raw_serial = self.uart.output.decode('ascii', errors='replace')
         serial = [line for line in raw_serial.splitlines() if line.strip()]
         if error or self.guest_exceptions.stopped:
@@ -451,8 +466,8 @@ class KernelRun:
                           'dma_transfers': self.dma.transfers if self.dma is not None else 0,
                           'recent_dma': list(self.dma.recent) if self.dma is not None else []}
                 if self.card is not None else None,
-                'mmio_devices': self.devices, 'last_mmio': list(self.last_io),
-                'most_read_registers': [[hx(address), count] for address, count in self.read_counts.most_common(5)]}
+                'mmio_devices': mmio_devices, 'last_mmio': list(self.last_io),
+                'most_read_registers': [[hx(address), count] for address, count in read_counts.most_common(5)]}
 
 
 def main():

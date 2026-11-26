@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 
 from gd13my_display import (CONFIG, CONTROL, DISPC, GFX_ATTRIBUTES, GFX_BA0, GFX_DESTINATION_KEY,
                             GFX_PIXEL_INC, GFX_ROW_INC, GFX_SIZE, LcdDisplay, TRANS_COLOR, VID1_REGISTERS)
+from gd13my_block_clock import install_block_clock
 from gd13my_mmio import (ClockManager, DebugUart, EmptyI2c, GpTimer, MicomCdp, OmapIntc, OmapSdMa, OmapUart,
                          PowerRegisters, ReadOnlyHsMmc, SdMaIrq, SyncTimer, TouchController, boot_devices)
 from gd13my_musb import HostMusb, UsbTransferError, UsbTransferPending
@@ -355,6 +356,37 @@ class Gd13myPeripheralTests(unittest.TestCase):
                 self.assertEqual(bank.read(0x10, 4), 0)
                 self.assertEqual(bank.read(0x14, 4), 1)
                 self.assertEqual(bank.read(0x1c, 4), 0)
+
+    def test_native_emmc_fifo_matches_arm_sector_reads(self):
+        from unicorn import UC_ARCH_ARM, UC_MODE_ARM, Uc
+        from unicorn.arm_const import UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R3
+
+        cpu = Uc(UC_ARCH_ARM, UC_MODE_ARM)
+        clock = install_block_clock(cpu, lambda *_: None)
+        if clock is None or not hasattr(clock.library, 'gd13my_mmc_read'):
+            self.skipTest('Native GD13MY MMC helper is unavailable')
+        cpu.mem_map(0x1000, 0x1000)
+        cpu.mem_write(0x1000, struct.pack('<4I', 0xe5902000, 0xe4812004, 0xe2533001, 0x1afffffb))
+        with tempfile.TemporaryFile() as image:
+            expected = bytes(index % 251 for index in range(1024))
+            image.write(expected)
+            image.flush()
+            mmc = ReadOnlyHsMmc(image)
+            mmc.attach_fifo(clock.map_mmc(cpu, 0x4809c000, 4096,
+                                           lambda _, offset, size, bank: bank.read(offset, size),
+                                           lambda _, offset, size, value, bank: bank.write(offset, size, value), mmc))
+            mmc.payload = expected
+            cpu.reg_write(UC_ARM_REG_R0, 0x4809c120)
+            cpu.reg_write(UC_ARM_REG_R1, 0x1200)
+            for status in (mmc.BRR, mmc.TC):
+                cpu.reg_write(UC_ARM_REG_R3, 128)
+                cpu.emu_start(0x1000, 0x1010, count=1024)
+                self.assertEqual(mmc.read(0x130, 4), status)
+                mmc.write(0x130, 4, status)
+            self.assertEqual(bytes(cpu.mem_read(0x1200, 1024)), expected)
+            self.assertEqual(mmc.payload, b'')
+            self.assertEqual(mmc.bytes_read, len(expected))
+            self.assertEqual(mmc.fifo.words_read, 254)
 
     def test_emmc_reads_a_sector_and_refuses_writes(self):
         sector = bytes(range(256)) * 2

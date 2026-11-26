@@ -68,7 +68,10 @@ def translate(cpu, va):
 
 
 def instruction(cpu, pc):
-    target = translate(cpu, pc)
+    return translated_instruction(cpu, translate(cpu, pc))
+
+
+def translated_instruction(cpu, target):
     if target and target.physical is not None:
         try:
             return word(cpu, target.physical)
@@ -220,10 +223,10 @@ class GuestExceptions:
         cpsr = cpu.reg_read(UC_ARM_REG_CPSR)
         pc = cpu.reg_read(UC_ARM_REG_PC)
         lr = cpu.reg_read(UC_ARM_REG_LR)
-        op = None if cpsr & 0x20 else instruction(cpu, pc)
+        source = translate(cpu, pc)
+        op = None if cpsr & 0x20 else translated_instruction(cpu, source)
         event = {'kind': 'arm_exception', 'number': number, 'pc': hx(pc), 'lr': hx(lr), 'cpsr': hx(cpsr),
                  'opcode': hx(op) if op is not None else None}
-        source = translate(cpu, pc)
         if op is not None and source and source.physical is not None:
             event['instruction_pa'] = hx(source.physical)
         self.events.append(event)
@@ -234,7 +237,7 @@ class GuestExceptions:
         elif number == PREFETCH_ABORT:
             addresses = (pc,)
         for address in addresses:
-            translation = translate(cpu, address)
+            translation = source if address == pc else translate(cpu, address)
             if not translation:
                 continue
             data = number == DATA_ABORT
