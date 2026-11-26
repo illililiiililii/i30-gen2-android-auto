@@ -164,6 +164,7 @@ class HostMusbTests(unittest.TestCase):
         self.assertEqual(musb.read(0x218, 4), 12)
         self.assertEqual(musb.read(0x21c, 4), 4)
         self.assertEqual(musb.read(0x116, 2) & 1, 1)
+        self.assertEqual(musb.read(0x118, 2), 0)
         musb.write(0x116, 2, 0x8000)  # Software acknowledges the drained short packet.
         self.assertEqual(musb.read(0x116, 2) & 1, 0)
         self.assertEqual(musb.read(0x200, 1), 2)

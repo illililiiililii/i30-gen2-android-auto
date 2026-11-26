@@ -21,6 +21,10 @@ $disk = Join-Path $env:LOCALAPPDATA 'i30-gd13my/codex-auth-map-cache/gd13my-medi
 
 2026년 11월 26일 실폰 재시험에서 AARE가 WinCE의 TLS 경고를 받은 뒤 기존 P12로 전환했고 WinCE에서 지문 일치를 확인했다. 재시험은 TLS 수신 도중 중단됐다. 순정 팝업은 표시됐으며 안내 페이지의 터치 진입, 새 세션의 영상과 재연결은 추가 검증이 필요하다. [실폰 로그 요약](REAL_PHONE_TEST_RESULTS.md)
 
+## 최초 등록 간소화
+
+공식 APK 설치는 안내의 공개 다운로드 QR로 열 수 있다. 기존 P12는 AARE에 한 번 가져온 뒤 계속 사용하고, 수신기 인증서는 AARE의 최초 연결 승인으로 등록한다. 향후 설치 도구에서 AARE 파일 가져오기용 P12와 확인용 수신기 공개 지문을 한 화면에 안내하면 최초 등록 동선을 줄일 수 있다. 공식 AARE 1.6.0의 파일 가져오기와 지문 승인 절차를 그대로 사용할 수 있다. [AARE 인증서 관리](https://github.com/prototux/AARE/blob/v1.6.0/docs/certificates.md)
+
 ## 새 시험 인증서로 다시 빌드
 
 다음 예시는 기존 ARM 개발 환경, 기존 .061 패치 출력물과 WinCE 에뮬레이터용 가상 매체를 사용한다. 순정 매체는 읽기 전용으로 사용한다.

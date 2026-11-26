@@ -113,7 +113,13 @@ class HostMusb(ResetBank):
             number, reg = address
             if reg == 15 and size == 1:
                 return 0x05 if number == 0 else 0x99
-            return self.endpoints[number].read(reg, size)
+            endpoint = self.endpoints[number]
+            value = endpoint.read(reg, size)
+            if reg in (8, 9):
+                # Keep the original USB packet size for AutoClear. RXCOUNT tracks unread FIFO bytes.
+                mask = (1 << (8 * min(size, 10 - reg))) - 1
+                value = (value & ~mask) | ((len(endpoint.input) >> (8 * (reg - 8))) & mask)
+            return value
         if offset == 0x78 and size == 1:
             return 0xff  # Fifteen TX and RX endpoints plus EP0.
         if offset == 0x79 and size == 1:

@@ -39,9 +39,10 @@
 | 09:52 | WinCE가 다른 리프를 받아 BearSSL 62와 `unknown_ca`를 기록했다. AARE가 TLS 경고를 받고 다음 연결에서 `GD13MY-AARE.p12`를 제공한다고 기록했다. 가상 포트만 다시 열었을 때는 AARE가 AAP 버전 응답을 기록했지만 WinCE까지 도착하지 않았다. |
 | 09:55 | USB를 소프트웨어로 다시 열거한 뒤 양쪽에서 AAP 1.7을 확인했다. AARE가 `GD13MY-AARE.p12`를 선택했다. WinCE에서 실제 수신 리프와 기대 SHA-256이 일치했고 `ServerHello`와 `Certificate`를 받았다. AARE가 SSL 메시지 2,116바이트를 기록한 뒤 나머지 핸드셰이크를 WinCE에서 받지 못했다. UART는 USB 읽기 중단을 기록했고 이 세션에서 추가 인증서 검증 오류는 없었다. |
 | 10:05–10:13 | 소프트웨어로 다시 열거해 같은 P12 세션을 두 차례 재현했다. 물리 USB에서 AAP 응답 2,122바이트를 모두 받았다. 물리 쪽에서 `ServerKeyExchange`, `CertificateRequest`, `ServerHelloDone`까지 확인했다. 가상 MUSB에서 512바이트 네 번과 마지막 74바이트를 이체했고, 마지막 DMA 잔량은 0이었다. WinCE의 TLS 메시지 기록은 여전히 `Certificate`에서 멈췄다. |
+| 10:35 | 새 순정 부팅과 비동기 WinUSB 수신에서도 기존 P12의 지문을 확인했다. WinCE가 앞선 512바이트 패킷들의 전송을 완료했으며 DMA에 입력한 데이터와 완료 버퍼의 해시가 일치했다. 이어 `ServerKeyExchange` 본문 300바이트 중 269바이트를 읽고 나머지 31바이트를 요청했다. 이때 마지막 USB 패킷 74바이트가 MUSB에 들어왔지만 WinCE의 USB 전송 완료가 보고되지 않았다. |
 
 인증서 선택과 현재 USB 수신 중단은 각각 재현됐다. 09:55 시험은 Finished에 도달하지 않았다. 중단 전 실폰 실행에서 `AUTH_COMPLETE`와 서비스 응답까지 기록한 구간은 이 문서의 첫 표에 있다. Windows를 통한 전달은 물리 USB 제어 및 바이트 전송만 담당한다. 검증과 AAP 처리는 WinCE에서 실행된다.
 
-가상 MUSB의 짧은 DMA 수신에서 `RXPKTRDY`가 너무 일찍 자동 해제되는 동작도 하드웨어 규격에 맞췄다. 전체 패킷이나 DMA 마지막 워드에 맞닿은 패킷에는 기존 자동 해제를 적용한다. ARM 수신기는 현재 시험에서 마지막 74바이트가 DMA로 전달된 뒤에도 다음 핸드셰이크 메시지로 진행하지 않았다. 다음 계측 지점은 WinCE의 USB 전송 완료 상태와 수신기의 실제 읽기 길이다. [MUSBMHDRC Programmer’s Guide](https://linux-sunxi.org/images/7/73/Musbmhdrc.pdf)
+가상 MUSB의 짧은 DMA 수신에서 `RXPKTRDY`가 너무 일찍 자동 해제되는 동작도 하드웨어 규격에 맞췄다. 전체 패킷이나 DMA 마지막 워드에 맞닿은 패킷에는 기존 자동 해제를 적용한다. 이어 CPU가 읽는 `RXCOUNT`에 FIFO의 남은 바이트를 반영했다. 자동 해제 판단에는 처음 도착한 패킷 크기를 사용한다. WinCE 전송 완료가 확인되는지 같은 P12로 재시험한다. [MUSBMHDRC Programmer’s Guide](https://linux-sunxi.org/images/7/73/Musbmhdrc.pdf)
 
-재개한 순정 이미지의 원본 로그는 로컬 `build/aare-integration/verified-alert/live/`의 `android-after-alert.log`, `android-matching-p12.log`, `gd13my-window-20261126-093907-417245.serial.log` 및 같은 이름의 `.usb-host.log`, `.bulk-trace.log`, `.tls-lengths.log`다.
+재개한 순정 이미지의 원본 로그는 로컬 `build/aare-integration/verified-alert/live/`의 `android-after-alert.log`, `android-matching-p12.log`, `gd13my-window-20261126-093907-417245.serial.log` 및 같은 이름의 `.usb-host.log`, `.bulk-trace.log`, `.tls-lengths.log`다. 재시동 후의 UART와 WinCE USB 전송 완료 계측은 `gd13my-window-20261126-102059-041030.serial.log` 및 같은 이름의 `.guest-calls.log`에 있다.
