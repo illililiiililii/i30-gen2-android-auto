@@ -93,7 +93,8 @@ class HostMusb(ResetBank):
             endpoint = self.endpoints[(offset - 0x20) // 4]
             data = endpoint.input[:size]
             del endpoint.input[:size]
-            if not endpoint.input and offset >= 0x24 and endpoint.read(6) & 0x8000:
+            if (not endpoint.input and offset >= 0x24 and endpoint.read(6) & RX_AUTO_CLEAR and
+                    endpoint.read(8) == (endpoint.read(4) & 0x7ff)):
                 endpoint.write(6, endpoint.read(6) & ~RX_READY)
             return int.from_bytes(data, 'little')
         if offset == DEVCTL and size == 1:
@@ -203,10 +204,12 @@ class HostMusb(ResetBank):
                 write(address, bytes(data))
             address, count = address + len(data), count - len(data)
             if not endpoint.input:
-                if csr & RX_AUTO_CLEAR:
-                    csr &= ~RX_READY
-                if endpoint.read(8) < packet_size:
+                received = endpoint.read(8)
+                if received < packet_size:
                     csr &= ~(RX_AUTO_REQUEST | REQUEST)
+                # DMA unloads words. A short packet outside the final word needs a software ACK.
+                if csr & RX_AUTO_CLEAR and (received + 3) // 4 == (packet_size + 3) // 4:
+                    csr &= ~RX_READY
                 endpoint.write(6, csr)
         else:
             return

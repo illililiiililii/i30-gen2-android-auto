@@ -163,6 +163,8 @@ class HostMusbTests(unittest.TestCase):
         self.assertEqual(memory[8:], b'bulk....')
         self.assertEqual(musb.read(0x218, 4), 12)
         self.assertEqual(musb.read(0x21c, 4), 4)
+        self.assertEqual(musb.read(0x116, 2) & 1, 1)
+        musb.write(0x116, 2, 0x8000)  # Software acknowledges the drained short packet.
         self.assertEqual(musb.read(0x116, 2) & 1, 0)
         self.assertEqual(musb.read(0x200, 1), 2)
 
@@ -183,7 +185,7 @@ class HostMusbTests(unittest.TestCase):
         musb.write(0x204, 4, 0x619)
         self.assertEqual(musb.read(0x204, 4), 0x618)
         self.assertEqual(musb.read(0x208, 4), 0x81787000)
-        self.assertEqual(musb.read(0x116, 2), 0x8000)
+        self.assertEqual(musb.read(0x116, 2), 0x8001)
         self.assertEqual(musb.read(0x200, 1), 1)
 
 
