@@ -77,6 +77,8 @@ E: 지도 이미지와 같은 DiskA 앱 이미지로 한 번씩 순차 부팅했
 
 `tools/bench_gd13my.py`의 `stock_map`은 게스트 스왑 수, 비디오 평면 복사 수와 소요 시간을 기록한다. `lcd_after_ready`는 준비 후 바뀐 LCD 화면 수와 화면 간격을 기록한다. `--route-input`에 `[준비 후 초, x, y, 눌림 여부]` 배열을 전달하고 같은 DiskA를 `--state`로 복제하면 터치를 재생할 수 있다. 출발지·목적지·모의 주행을 확인한 입력 목록은 아직 필요하다.
 
+DiskA를 복제한 시험에서 `[[1.0,400,430,true],[1.35,400,430,false]]`로 시작 경고의 동의를 눌렀다. 입력 2개가 전송됐고 최종 LCD에 양재 지도가 표시됐다. 이 시험의 준비 시간은 126.22초였고, 준비 이후 변경된 LCD 프레임은 3장이다. 원본은 `E:/i30-gd13my-images/map-perf/route-input-smoke/`에 있다. 별도의 WinCE ARM 시험에서는 모의 피어와 상호 TLS 및 순정 터치 전달을 확인했다. 800×480 영상 15장은 모두 응답과 표시를 마쳤으며 벽시계는 3.064초였다. 원본은 같은 상위 폴더의 `arm-video-regression.json`이다.
+
 ```powershell
 Set-Location F:/i30-gen2-android-auto
 $py = Join-Path $env:LOCALAPPDATA 'i30-phase2-venv/Scripts/python.exe'
