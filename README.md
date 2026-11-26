@@ -1,5 +1,11 @@
 # i30 Gen2 Android Auto
 
+## 최신 개발 상태 및 문서 안내
+
+[현재 상태](docs/PROJECT_STATUS.md) · [다음 작업](docs/NEXT_TASKS.md) · [최신 인계](docs/HANDOFF.md) · [전체 문서 색인](docs/INDEX.md)
+
+아래 Phase별 내용은 당시의 연구 기록이다. 최신 AARE 자동 실행과 실폰 검증 상태는 위 문서를 우선한다.
+
 ## Phase 7·8 · 순정 CE 에뮬레이터 시험판
 
 순정 내비의 `내비설정 → 기타 → Android Auto`에서 USB 버전 협상을 시험하고 부팅 시 연결 시도 여부를 저장할 수 있다. [실행 방법과 검증 결과](docs/PHASE7_8_RESULTS.md) · [에뮬레이터 아키텍처](docs/EMULATOR_ARCHITECTURE.md)
