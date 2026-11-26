@@ -508,6 +508,18 @@ class Gd13myPeripheralTests(unittest.TestCase):
         length = struct.unpack_from('>I', image, 33)[0]
         self.assertEqual(zlib.decompress(image[41:41 + length]), bytes.fromhex('00 ff0000 00ff00'))
 
+    def test_map_rgb565_flips_rows_without_overwriting_padding(self):
+        display = LcdDisplay()
+        base = 0x84000000
+        display.active = (base, 0, 0x10001, 0x0d, 1, 1)
+        display.video = (base, 0, 0x10001, 0x0d, 3, 1)
+        display.color_key = 0xf818
+        writes = {}
+        rgb = bytes.fromhex('fb7fa7 070307 123456 abcdef')
+        self.assertTrue(display.copy_map_to_video(
+            rgb, 2, 2, writes.__setitem__, lambda address, count: (address, count) == (base, 10)))
+        self.assertEqual(writes, {base: bytes.fromhex('aa11 7dae'), base + 6: bytes.fromhex('f4fb 0000')})
+
     def test_stock_calibration_cross_can_be_seen_through_the_graphics_key(self):
         display = LcdDisplay()
         base, width, height, key = 0x84000000, 800, 480, 0xf818

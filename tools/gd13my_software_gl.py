@@ -255,8 +255,12 @@ class GuestGL:
         self.gl_error = 0
         self.arrays = {}
         self.enabled = set()
-        self.last_frame = 0
+        self.next_map_copy = 0
+        self.next_preview = 0
         self.swaps = 0
+        self.map_copies = 0
+        self.map_copy_seconds = 0.0
+        self.first_map_copy = self.last_map_copy = None
         self.logged = set()
         self.retries = {}
         self.log = run.output.with_suffix(".gles.log")
@@ -564,17 +568,27 @@ class GuestGL:
                 else int(bool(self.gl.current(None, None)))
             )
         if ordinal == 22:
-            self.gl.call("glFlush", None, "")
             self.swaps += 1
             now = monotonic()
-            if now >= self.last_frame:
-                self.last_frame = now + 2
+            preview = self.preview and now >= self.next_preview
+            copy = self.run.display is not None and now >= self.next_map_copy
+            self.gl.call("glFlush", None, "")
+            if copy or preview:
                 b = self.gl.read_pixels(0, 0, GLES_WIDTH, GLES_HEIGHT, 0x1907)
-                if self.run.display is not None:
-                    self.run.display.copy_map_to_video(
+                if copy:
+                    copied = self.run.display.copy_map_to_video(
                         b, GLES_WIDTH, GLES_HEIGHT, self.run.cpu.mem_write, self.run.contains_ram
                     )
-                if self.preview:
+                    elapsed = monotonic() - now
+                    self.next_map_copy = now + max(1 / 30, 4 * elapsed)
+                    if copied:
+                        if self.first_map_copy is None:
+                            self.first_map_copy = now
+                        self.last_map_copy = now
+                        self.map_copies += 1
+                        self.map_copy_seconds += elapsed
+                if preview:
+                    self.next_preview = now + 2
                     width = GLES_WIDTH * 3
                     rows = b"".join(
                         b"\0" + b[i : i + width]
@@ -583,10 +597,19 @@ class GuestGL:
                     frame = png(GLES_WIDTH, GLES_HEIGHT, rows)
                     self.run.output.with_suffix(".gles.png").write_bytes(frame)
                     self.run.messages.put(("map", frame))
-                if self.swaps in (1, 2, 3):
-                    self.note("swap", self.swaps, "stock guest OpenGL render")
+            if self.swaps <= 3:
+                self.note("swap", self.swaps, "stock guest OpenGL render")
             return 1
         return 0
+
+    def map_report(self):
+        return {
+            "guest_swaps": self.swaps,
+            "video_plane_copies": self.map_copies,
+            "copy_seconds": round(self.map_copy_seconds, 4),
+            "copy_window_seconds": (round(self.last_map_copy - self.first_map_copy, 4)
+                                    if self.first_map_copy is not None else None),
+        }
 
     def prepare_arrays(self, count):
         keep = []

@@ -60,3 +60,33 @@ cl.exe /nologo /LD /O2 /W4 /WX /MT `
 | 전체 ARM 시험 벽시계 | 4.365초 | 3.117초 |
 
 이 수치는 에뮬레이션된 ARM 실행이다. 실제 순정 GDI와 실폰 USB를 포함한 영상 속도는 따로 측정해야 한다. 원본은 로컬 `E:/i30-gd13my-images/opencode-resume-perf/touch/`의 `current-arm-video-profile.json`, `decoder-o2-profile.json`이다.
+
+## 순정 지도 표시 경로
+
+`GuestGL.egl`은 순정 앱의 `eglSwapBuffers`가 완료돼도 호스트에서 LCD 비디오 평면으로 2초에 한 번만 복사했다. 이제 실제 복사 비용에 따라 최대 30Hz까지 전달한다. 별도 지도 미리보기 PNG에는 기존 2초 간격을 적용한다. `LcdDisplay.copy_map_to_video`는 RGB565 바이트를 일괄 변환하고 한 줄의 패딩이 없으면 Unicorn에 한 번에 쓴다. LCD 캡처는 RGB565 채널 변환과 한 색으로 채워진 키 행의 합성을 묶어서 처리한다. Tk에 화면이 여러 장 대기하면 가장 최근 프레임을 표시한다.
+
+기존 펌웨어 추적에서 순정 `srvkm.dll`의 SGX 초기화 대기와 `GDdNavi.exe`의 GLES 호출을 확인했다. 현재 에뮬레이터의 지도는 53개 GLES 호출을 Windows 소프트웨어 OpenGL로 전달해 그린다. 이번 개선은 그 출력과 DISPC 합성 사이에 적용했다. 실차의 GPU 사용률과 DSP 영상 디코딩 처리량은 측정되지 않았다. [순정 그래픽 초기화와 지도 렌더링](../GD13MY_EMULATION.md)
+
+800×480 프레임 합성 시험에서 같은 입력을 7번씩 사용했다. RGB888 지도 복사 중앙값은 93.64ms에서 6.38ms로, LCD PNG는 일반 화면 147.37ms에서 39.42ms, 전체 컬러 키 화면 165.43ms에서 45.97ms, 혼합 키 화면 135.01ms에서 79.98ms로 줄었다. 비교하는 각 출력의 해시가 일치했다. 65,536개 RGB565 값의 RGB 확장도 이전 LUT와 일치했다. 이 수치는 호스트 디스플레이 경로의 합성 입력 시험이다.
+
+헤드리스 후보에서 순정 앱이 완료한 5개의 스왑을 모두 LCD 비디오 평면에 기록했다. OpenGL 읽기와 LCD 비디오 평면 쓰기는 합계 47.4ms였다. 내비 준비 후 15초 동안 서로 다른 LCD 프레임 2장이 관찰됐다. 경로를 시작하지 않은 상태에서의 결과다. 사용자가 보고한 모의 주행 지연에서 게스트 렌더링과 LCD 전달이 각각 차지하는 시간은 동일 경로를 재생해 측정해야 한다.
+
+E: 지도 이미지와 같은 DiskA 앱 이미지로 한 번씩 순차 부팅했다. 기준과 후보에서 내비 준비는 173.95초와 159.65초, 첫 LCD는 12.04초와 13.87초, 프로세스 CPU는 115.69초와 152.45초였다. 기존 실폰용 뷰어가 두 실행 중 계속 동작했고 두 실행의 CPU 사용률도 달랐다. 전체 처리량이 2.5배 좋아졌다는 증거는 없다. 비교 원본은 로컬 `E:/i30-gd13my-images/map-perf/`의 `paired-baseline`, `paired-candidate`에 있다. 기존 115.45초 기록과의 비교에는 같은 미디어 경로에서 반복 실행이 필요하다.
+
+기존 가상환경에서 전체 회귀 90개를 통과했다. 네이티브 클록을 비활성화하면 89개를 통과했고 네이티브 eMMC 전용 시험 1개를 건너뛰었다. RGB565 패딩과 행 순서를 확인하는 회귀를 추가했다. Windows에서는 삼성 USB 장치가 보였고 ADB 목록은 비어 있었다. 실행 중인 실폰용 뷰어를 유지했다. 변경 후 실폰 인증·영상·터치는 다시 검증해야 한다.
+
+`tools/bench_gd13my.py`의 `stock_map`은 게스트 스왑 수, 비디오 평면 복사 수와 소요 시간을 기록한다. `lcd_after_ready`는 준비 후 바뀐 LCD 화면 수와 화면 간격을 기록한다. `--route-input`에 `[준비 후 초, x, y, 눌림 여부]` 배열을 전달하고 같은 DiskA를 `--state`로 복제하면 터치를 재생할 수 있다. 출발지·목적지·모의 주행을 확인한 입력 목록은 아직 필요하다.
+
+```powershell
+Set-Location F:/i30-gen2-android-auto
+$py = Join-Path $env:LOCALAPPDATA 'i30-phase2-venv/Scripts/python.exe'
+& $py tools/bench_gd13my.py `
+    --image firmware/extracted/GD13MY/BSP/0002dfc7_kernel `
+    --disk E:/i30-gd13my-images/gd13my-media-v2.img `
+    --app-volume E:/i30-gd13my-images/opencode-resume-perf/touch/gd13my-aare-settings-o2.img `
+    --software-gl-app firmware/extracted/GD13MY/APP/00d12869_GDdNavi.exe `
+    --output-dir E:/i30-gd13my-images/map-perf/repeat `
+    --stop-after-ready 15 --ready-timeout 300 --save-output
+```
+
+F:와 E:는 같은 USB 디스크의 파티션이다. 기존 이미지에서 각각 32MiB를 읽은 한 차례 시험은 17.71 및 18.00MiB/s였다. 호스트 캐시와 파일 배치에 영향을 받을 수 있다. E:를 출력에 사용했고 기존 이미지를 옮기지 않았다.

@@ -416,7 +416,7 @@ class WindowedRun(KernelRun):
         started = monotonic()
         report, frame = self.display.capture(self.cpu.mem_read, self.contains_ram)
         # Poll unchanged screens quickly and leave CPU time for the guest during animations.
-        self.next_frame_time = started + max(0.125, 4 * (monotonic() - started))
+        self.next_frame_time = started + max(1 / 30, 4 * (monotonic() - started))
         if frame is None:
             return
         if self.last_frame is None and report['uniform']:
@@ -494,6 +494,8 @@ def boot(image, disk, seconds, messages, pointer, menu_button, closing, output, 
                 report['touch'] = {'samples': run.touch.consumed, 'last_reply': hex(run.touch.last_reply),
                                    'commands': {hex(word): count for word, count in run.touch.commands.items()}}
                 report['wall_seconds_from_guest_init'] = run.boot_timings
+                if renderer is not None:
+                    report['stock_map'] = renderer.map_report()
                 report['virtual_micom_requests'] = list(run.micom.exchanges)
                 report['media']['overlay_sectors'] = len(card.overlay)
                 if restored is not None:
@@ -711,18 +713,14 @@ def main():
             else:
                 root.destroy()
             return
+        latest_frame = None
         while True:
             try:
                 kind, payload = messages.get_nowait()
             except Empty:
                 break
             if kind == 'frame':
-                picture = tk.PhotoImage(data=payload, format='png')
-                if projected_frame is None:
-                    canvas.itemconfigure(viewport, image=picture)
-                if not guest_visible:
-                    guest_visible = True
-                    root.title('GD13MY 순정 펌웨어 — 게스트 화면')
+                latest_frame = payload
             elif kind == 'map':
                 if not args.show_map_preview:
                     continue
@@ -760,6 +758,13 @@ def main():
                 status.set(f'{label} · {payload}')
                 input_status.set('이 창에 마지막 게스트 화면이 남아 있습니다.')
                 menu_control.configure(state='disabled')
+        if latest_frame is not None:
+            picture = tk.PhotoImage(data=latest_frame, format='png')
+            if projected_frame is None:
+                canvas.itemconfigure(viewport, image=picture)
+            if not guest_visible:
+                guest_visible = True
+                root.title('GD13MY 순정 펌웨어 — 게스트 화면')
         if power_stopping and not worker.is_alive():
             power_stopping = False
             picture = projected_picture = projected_frame = None
@@ -785,7 +790,7 @@ def main():
             else:
                 activity = '실행 중' if guest_visible else '부팅 중'
             status.set(f'{activity} · 게스트 {guest_seconds}초 · 터치 수신 {touches}회')
-        root.after(33 if projected_frame is not None else 100, refresh)
+        root.after(33, refresh)
 
     def close():
         nonlocal window_closing

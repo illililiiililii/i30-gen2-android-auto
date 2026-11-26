@@ -11,6 +11,7 @@ import ctypes as C
 from ctypes import wintypes as W
 from datetime import datetime
 import json
+from math import isfinite
 from pathlib import Path
 from queue import Empty, SimpleQueue
 import sqlite3
@@ -106,6 +107,8 @@ def main():
     parser.add_argument('--software-gl-app', type=Path, required=True, help='Extracted GDdNavi.exe')
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--state', type=Path, help='DiskA state database to copy for this run')
+    parser.add_argument('--route-input', type=Path,
+                        help='JSON array of [seconds after navigation ready, x, y, pressed] pointer events')
     parser.add_argument('--host-utc-offset', type=int)
     parser.add_argument('--guest-clock-mhz', type=float, default=4.5)
     parser.add_argument('--usb-clock-mhz', type=float, default=12.0)
@@ -119,6 +122,22 @@ def main():
     parser.add_argument('--no-auto-calibrate', action='store_true')
     parser.add_argument('--save-output', action='store_true', help='Keep the emulator JSON and logs')
     args = parser.parse_args()
+    route_input = []
+    if args.route_input is not None:
+        try:
+            route_input = json.loads(args.route_input.read_text(encoding='utf-8'))
+            if not isinstance(route_input, list):
+                raise ValueError('expected an array')
+            last_at = 0
+            for at, x, y, pressed in route_input:
+                if (type(at) not in (int, float) or not isfinite(at)
+                        or not last_at <= at < args.stop_after_ready
+                        or type(x) is not int or not 0 <= x < 800
+                        or type(y) is not int or not 0 <= y < 480 or type(pressed) is not bool):
+                    raise ValueError('invalid timing, coordinates or pressed state')
+                last_at = at
+        except (OSError, OverflowError, TypeError, ValueError) as error:
+            parser.error(f'--route-input: {error}')
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime('%Y%m%d-%H%M%S-%f')
@@ -149,6 +168,10 @@ def main():
     serial_offset = 0
     markers = {}
     ready_at = None
+    route_event = 0
+    lcd_frames = 0
+    first_lcd_after_ready = previous_lcd = None
+    longest_lcd_gap = 0.0
     stop_reason = None
     shutdown_at = None
     thread.start()
@@ -164,8 +187,21 @@ def main():
                 stop_reason = f'{kind}:{payload}'
             elif kind == 'navigation_ready' and ready_at is None:
                 ready_at = now
+            elif kind == 'frame' and ready_at is not None:
+                lcd_frames += 1
+                if first_lcd_after_ready is None:
+                    first_lcd_after_ready = now
+                if previous_lcd is not None:
+                    longest_lcd_gap = max(longest_lcd_gap, now - previous_lcd)
+                previous_lcd = now
         serial_offset = tail_markers(serial_path, serial_offset, markers)
         elapsed = now - started
+        while ready_at is not None and route_event < len(route_input) and not closing.is_set():
+            at, x, y, pressed = route_input[route_event]
+            if now - ready_at < at:
+                break
+            pointer.put((x, y, pressed))
+            route_event += 1
         if ready_at is not None and now - ready_at >= args.stop_after_ready and not closing.is_set():
             closing.set()
         if not thread.is_alive():
@@ -201,6 +237,14 @@ def main():
         'guest_seconds': round(guest_seconds, 1),
         'guest_clock_munits_per_wall_second': round(guest_seconds * boot_clock_units / wall / 1e6, 2),
         'timer': report.get('timer'),
+        'stock_map': report.get('stock_map'),
+        'route_inputs_sent': route_event,
+        'lcd_after_ready': {
+            'changed_frames': lcd_frames,
+            'first_to_last_seconds': (round(previous_lcd - first_lcd_after_ready, 4)
+                                      if lcd_frames else None),
+            'longest_gap_seconds': round(longest_lcd_gap, 4) if lcd_frames > 1 else None,
+        },
         'cpu_seconds': round(final['cpu_seconds'] - sampler.last['cpu_seconds'], 2),
         'cpu_percent': round((final['cpu_seconds'] - sampler.last['cpu_seconds']) / wall * 100, 1),
         'peak_working_set_mb': round(final['peak_working_set'] / 1048576, 1),
