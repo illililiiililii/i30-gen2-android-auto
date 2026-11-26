@@ -32,4 +32,13 @@
 
 이제 AARE 모드에서 BearSSL이 신뢰 실패로 핸드셰이크를 중단했고 양방향 TLS가 암호화 상태로 전환되기 전이면, 수신기가 TLS 1.2 표준 fatal `unknown_ca` 또는 지문 불일치의 `access_denied`를 전송한다. AARE가 인증서 거절과 USB 끊김을 구별해 다음 등록 인증서를 시도할 수 있다. ARM PE 회귀에서 두 경고를 TLS 상대가 각각 받았고, 등록된 CA와 지문이 맞을 때 인증이 완료됐다. [TLS 1.2 경고](https://www.rfc-editor.org/rfc/rfc5246.html#section-7.2.2)
 
-`adb shell svc usb setFunctions mtp`로 폰을 일반 USB로 전환한 뒤 가상 USB 재연결을 수행했다. 정식 Windows 포트 재시작은 현재 권한에서 거부됐다. 순정 WinCE의 AOA 재요청으로 액세서리 모드와 AAP 1.7에 다시 도달했다. 새 TLS 경고가 들어간 별도 DiskA의 실폰 시험은 순정 부팅 후 이어간다.
+`adb shell svc usb setFunctions mtp`로 폰을 일반 USB로 전환한 뒤 가상 USB 재연결을 수행했다. Windows의 장치 재시작은 현재 권한에서 거부됐다. 가상 포트의 핸들을 반환한 뒤 순정 WinCE의 AOA 재요청으로 액세서리 모드와 AAP 1.7에 다시 도달했다.
+
+| 시각 (KST) | 실폰 재시험 결과 |
+| --- | --- |
+| 09:52 | WinCE가 다른 리프를 받아 BearSSL 62와 `unknown_ca`를 기록했다. AARE가 TLS 경고를 받고 다음 연결에서 `GD13MY-AARE.p12`를 제공한다고 기록했다. 가상 포트만 다시 열었을 때는 AARE가 AAP 버전 응답을 기록했지만 WinCE까지 도착하지 않았다. |
+| 09:55 | USB를 소프트웨어로 다시 열거한 뒤 양쪽에서 AAP 1.7을 확인했다. AARE가 `GD13MY-AARE.p12`를 선택했다. WinCE에서 실제 수신 리프와 기대 SHA-256이 일치했고 `ServerHello`와 `Certificate`를 받았다. AARE가 SSL 메시지 2,116바이트를 기록한 뒤 나머지 핸드셰이크를 WinCE에서 받지 못했다. UART는 USB 읽기 중단을 기록했고 이 세션에서 추가 인증서 검증 오류는 없었다. |
+
+인증서 선택과 현재 USB 수신 중단은 각각 재현됐다. 09:55 시험은 Finished에 도달하지 않았다. 중단 전 실폰 실행에서 `AUTH_COMPLETE`와 서비스 응답까지 기록한 구간은 이 문서의 첫 표에 있다. Windows를 통한 전달은 물리 USB 제어 및 바이트 전송만 담당한다. 검증과 AAP 처리는 WinCE에서 실행된다.
+
+재개한 순정 이미지의 원본 로그는 로컬 `build/aare-integration/verified-alert/live/`의 `android-after-alert.log`, `android-matching-p12.log`, `gd13my-window-20261126-093907-417245.serial.log` 및 같은 이름의 `.usb-host.log`다. 다음 검증은 등록된 리프를 제공한 세션에서 실폰 bulk IN과 가상 MUSB 수신량을 비교하고, Finished와 서비스 응답 뒤 첫 프레임이 나올 때까지 이어간다.
