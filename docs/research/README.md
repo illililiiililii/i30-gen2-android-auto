@@ -1,25 +1,56 @@
-# research — 자료 탐색
+# research
 
-기존 문서는 원래 경로에 보존한다. 아래 목록은 파일명과 기존 폴더를 기준으로 분류한 탐색용 색인으로, 각 문서의 최신성 또는 모든 주장의 검증을 보장하지 않는다. 현재 상태는 [PROJECT_STATUS](../PROJECT_STATUS.md)를 우선한다.
+[현재 상태](../PROJECT_STATUS.md) · [이동 목록](../RELOCATION.md)
 
-- [01_FIRMWARE_INVENTORY.md](../Antigravity-search/genesis-premium-gen2/01_FIRMWARE_INVENTORY.md) — `Antigravity-search/genesis-premium-gen2/01_FIRMWARE_INVENTORY.md`
-- [02_EXTRACTION_REPORT.md](../Antigravity-search/genesis-premium-gen2/02_EXTRACTION_REPORT.md) — `Antigravity-search/genesis-premium-gen2/02_EXTRACTION_REPORT.md`
-- [03_PLATFORM_ANALYSIS.md](../Antigravity-search/genesis-premium-gen2/03_PLATFORM_ANALYSIS.md) — `Antigravity-search/genesis-premium-gen2/03_PLATFORM_ANALYSIS.md`
-- [04_ANDROID_AUTO_MODULE_MAP.md](../Antigravity-search/genesis-premium-gen2/04_ANDROID_AUTO_MODULE_MAP.md) — `Antigravity-search/genesis-premium-gen2/04_ANDROID_AUTO_MODULE_MAP.md`
-- [05_ANDROID_AUTO_REVERSE_ENGINEERING.md](../Antigravity-search/genesis-premium-gen2/05_ANDROID_AUTO_REVERSE_ENGINEERING.md) — `Antigravity-search/genesis-premium-gen2/05_ANDROID_AUTO_REVERSE_ENGINEERING.md`
-- [06_TLS_AUTHENTICATION_ANALYSIS.md](../Antigravity-search/genesis-premium-gen2/06_TLS_AUTHENTICATION_ANALYSIS.md) — `Antigravity-search/genesis-premium-gen2/06_TLS_AUTHENTICATION_ANALYSIS.md`
-- [07_USB_MEDIA_ANALYSIS.md](../Antigravity-search/genesis-premium-gen2/07_USB_MEDIA_ANALYSIS.md) — `Antigravity-search/genesis-premium-gen2/07_USB_MEDIA_ANALYSIS.md`
-- [08_GD13MY_COMPARISON.md](../Antigravity-search/genesis-premium-gen2/08_GD13MY_COMPARISON.md) — `Antigravity-search/genesis-premium-gen2/08_GD13MY_COMPARISON.md`
-- [EVIDENCE_VERIFICATION.md](../Antigravity-search/genesis-premium-gen2/EVIDENCE_VERIFICATION.md) — `Antigravity-search/genesis-premium-gen2/EVIDENCE_VERIFICATION.md`
-- [FINAL_HANDOFF.md](../Antigravity-search/genesis-premium-gen2/FINAL_HANDOFF.md) — `Antigravity-search/genesis-premium-gen2/FINAL_HANDOFF.md`
-- [PROGRESS.md](../Antigravity-search/genesis-premium-gen2/PROGRESS.md) — `Antigravity-search/genesis-premium-gen2/PROGRESS.md`
-- [07_GENESIS_FIRMWARE_IDENTITY_SEARCH.md](../OpenCode-search/authentication-deep-research/07_GENESIS_FIRMWARE_IDENTITY_SEARCH.md) — `OpenCode-search/authentication-deep-research/07_GENESIS_FIRMWARE_IDENTITY_SEARCH.md`
-- [10_EXISTING_RESEARCH_CROSS_VALIDATION.md](../OpenCode-search/genesis-premium-gen2/10_EXISTING_RESEARCH_CROSS_VALIDATION.md) — `OpenCode-search/genesis-premium-gen2/10_EXISTING_RESEARCH_CROSS_VALIDATION.md`
-- [11_OPEN_SOURCE_IMPLEMENTATION_COMPARISON.md](../OpenCode-search/genesis-premium-gen2/11_OPEN_SOURCE_IMPLEMENTATION_COMPARISON.md) — `OpenCode-search/genesis-premium-gen2/11_OPEN_SOURCE_IMPLEMENTATION_COMPARISON.md`
-- [12_PUBLIC_CERTIFICATE_COMPARISON.md](../OpenCode-search/genesis-premium-gen2/12_PUBLIC_CERTIFICATE_COMPARISON.md) — `OpenCode-search/genesis-premium-gen2/12_PUBLIC_CERTIFICATE_COMPARISON.md`
-- [13_ERROR07_EXTERNAL_CASE_ANALYSIS.md](../OpenCode-search/genesis-premium-gen2/13_ERROR07_EXTERNAL_CASE_ANALYSIS.md) — `OpenCode-search/genesis-premium-gen2/13_ERROR07_EXTERNAL_CASE_ANALYSIS.md`
-- [14_OMAP3530_ACCELERATION_RESEARCH.md](../OpenCode-search/genesis-premium-gen2/14_OMAP3530_ACCELERATION_RESEARCH.md) — `OpenCode-search/genesis-premium-gen2/14_OMAP3530_ACCELERATION_RESEARCH.md`
-- [15_CODEX_IMPLEMENTATION_RECOMMENDATIONS.md](../OpenCode-search/genesis-premium-gen2/15_CODEX_IMPLEMENTATION_RECOMMENDATIONS.md) — `OpenCode-search/genesis-premium-gen2/15_CODEX_IMPLEMENTATION_RECOMMENDATIONS.md`
-- [FINAL_HANDOFF.md](../OpenCode-search/genesis-premium-gen2/FINAL_HANDOFF.md) — `OpenCode-search/genesis-premium-gen2/FINAL_HANDOFF.md`
-- [PROGRESS.md](../OpenCode-search/genesis-premium-gen2/PROGRESS.md) — `OpenCode-search/genesis-premium-gen2/PROGRESS.md`
-- [README.md](../OpenCode-search/genesis-premium-gen2/README.md) — `OpenCode-search/genesis-premium-gen2/README.md`
+- [genesis/original/genesis-premium-gen2/01_FIRMWARE_INVENTORY.md](genesis/original/genesis-premium-gen2/01_FIRMWARE_INVENTORY.md)
+- [genesis/original/genesis-premium-gen2/02_EXTRACTION_REPORT.md](genesis/original/genesis-premium-gen2/02_EXTRACTION_REPORT.md)
+- [genesis/original/genesis-premium-gen2/03_PLATFORM_ANALYSIS.md](genesis/original/genesis-premium-gen2/03_PLATFORM_ANALYSIS.md)
+- [genesis/original/genesis-premium-gen2/04_ANDROID_AUTO_MODULE_MAP.md](genesis/original/genesis-premium-gen2/04_ANDROID_AUTO_MODULE_MAP.md)
+- [genesis/original/genesis-premium-gen2/05_ANDROID_AUTO_REVERSE_ENGINEERING.md](genesis/original/genesis-premium-gen2/05_ANDROID_AUTO_REVERSE_ENGINEERING.md)
+- [genesis/original/genesis-premium-gen2/06_TLS_AUTHENTICATION_ANALYSIS.md](genesis/original/genesis-premium-gen2/06_TLS_AUTHENTICATION_ANALYSIS.md)
+- [genesis/original/genesis-premium-gen2/07_USB_MEDIA_ANALYSIS.md](genesis/original/genesis-premium-gen2/07_USB_MEDIA_ANALYSIS.md)
+- [genesis/original/genesis-premium-gen2/08_GD13MY_COMPARISON.md](genesis/original/genesis-premium-gen2/08_GD13MY_COMPARISON.md)
+- [genesis/original/genesis-premium-gen2/EVIDENCE_VERIFICATION.md](genesis/original/genesis-premium-gen2/EVIDENCE_VERIFICATION.md)
+- [genesis/original/genesis-premium-gen2/FINAL_HANDOFF.md](genesis/original/genesis-premium-gen2/FINAL_HANDOFF.md)
+- [genesis/original/genesis-premium-gen2/PROGRESS.md](genesis/original/genesis-premium-gen2/PROGRESS.md)
+- [genesis/original/genesis-premium-gen2/scripts/check_mode.py](genesis/original/genesis-premium-gen2/scripts/check_mode.py)
+- [genesis/original/genesis-premium-gen2/scripts/check_rsa_func.py](genesis/original/genesis-premium-gen2/scripts/check_rsa_func.py)
+- [genesis/original/genesis-premium-gen2/scripts/disasm_decrypt.py](genesis/original/genesis-premium-gen2/scripts/disasm_decrypt.py)
+- [genesis/original/genesis-premium-gen2/scripts/disasm_initdecrypt.py](genesis/original/genesis-premium-gen2/scripts/disasm_initdecrypt.py)
+- [genesis/original/genesis-premium-gen2/scripts/disasm_main.py](genesis/original/genesis-premium-gen2/scripts/disasm_main.py)
+- [genesis/original/genesis-premium-gen2/scripts/disasm_mpi_read.py](genesis/original/genesis-premium-gen2/scripts/disasm_mpi_read.py)
+- [genesis/original/genesis-premium-gen2/scripts/disasm_pkcs1.py](genesis/original/genesis-premium-gen2/scripts/disasm_pkcs1.py)
+- [genesis/original/genesis-premium-gen2/scripts/find_qrc.py](genesis/original/genesis-premium-gen2/scripts/find_qrc.py)
+- [genesis/original/genesis-premium-gen2/scripts/hash_inventory.py](genesis/original/genesis-premium-gen2/scripts/hash_inventory.py)
+- [genesis/original/genesis-premium-gen2/scripts/inspect_firmware.py](genesis/original/genesis-premium-gen2/scripts/inspect_firmware.py)
+- [genesis/original/genesis-premium-gen2/scripts/inspect_keystore_ctx.py](genesis/original/genesis-premium-gen2/scripts/inspect_keystore_ctx.py)
+- [genesis/original/genesis-premium-gen2/scripts/inspect_provisioning.py](genesis/original/genesis-premium-gen2/scripts/inspect_provisioning.py)
+- [genesis/original/genesis-premium-gen2/scripts/resolve_addrs.py](genesis/original/genesis-premium-gen2/scripts/resolve_addrs.py)
+- [genesis/original/genesis-premium-gen2/scripts/search_keywords.py](genesis/original/genesis-premium-gen2/scripts/search_keywords.py)
+- [genesis/original/genesis-premium-gen2/scripts/test_div.py](genesis/original/genesis-premium-gen2/scripts/test_div.py)
+- [genesis/original/genesis-premium-gen2/scripts/test_key_extract.py](genesis/original/genesis-premium-gen2/scripts/test_key_extract.py)
+- [genesis/original/genesis-premium-gen2/scripts/test_rsa.py](genesis/original/genesis-premium-gen2/scripts/test_rsa.py)
+- [DEEP_REVERSE_ENGINEERING.md](DEEP_REVERSE_ENGINEERING.md)
+- [FEASIBILITY.md](FEASIBILITY.md)
+- [genesis-premium-gen2/10_EXISTING_RESEARCH_CROSS_VALIDATION.md](genesis-premium-gen2/10_EXISTING_RESEARCH_CROSS_VALIDATION.md)
+- [genesis-premium-gen2/11_OPEN_SOURCE_IMPLEMENTATION_COMPARISON.md](genesis-premium-gen2/11_OPEN_SOURCE_IMPLEMENTATION_COMPARISON.md)
+- [genesis-premium-gen2/12_PUBLIC_CERTIFICATE_COMPARISON.md](genesis-premium-gen2/12_PUBLIC_CERTIFICATE_COMPARISON.md)
+- [genesis-premium-gen2/13_ERROR07_EXTERNAL_CASE_ANALYSIS.md](genesis-premium-gen2/13_ERROR07_EXTERNAL_CASE_ANALYSIS.md)
+- [genesis-premium-gen2/14_OMAP3530_ACCELERATION_RESEARCH.md](genesis-premium-gen2/14_OMAP3530_ACCELERATION_RESEARCH.md)
+- [genesis-premium-gen2/15_CODEX_IMPLEMENTATION_RECOMMENDATIONS.md](genesis-premium-gen2/15_CODEX_IMPLEMENTATION_RECOMMENDATIONS.md)
+- [genesis-premium-gen2/FINAL_HANDOFF.md](genesis-premium-gen2/FINAL_HANDOFF.md)
+- [genesis-premium-gen2/PROGRESS.md](genesis-premium-gen2/PROGRESS.md)
+- [genesis-premium-gen2/README.md](genesis-premium-gen2/README.md)
+- [RESEARCH.md](RESEARCH.md)
+- [web/GD13MY_ANDROID_AUTO_RESEARCH_HANDOFF.md](web/GD13MY_ANDROID_AUTO_RESEARCH_HANDOFF.md)
+- [web/README.md](web/README.md)
+- [web/Web-chatGPT/ANDROID_AUTO_POST_AUTH_COMPATIBILITY.md](web/Web-chatGPT/ANDROID_AUTO_POST_AUTH_COMPATIBILITY.md)
+- [web/Web-chatGPT/BEARSSL_CONSCRYPT_COMPARISON.md](web/Web-chatGPT/BEARSSL_CONSCRYPT_COMPARISON.md)
+- [web/Web-chatGPT/CODEX_NEXT_VALIDATION_TASKS.md](web/Web-chatGPT/CODEX_NEXT_VALIDATION_TASKS.md)
+- [web/Web-chatGPT/GD13MY_DSP_ACCELERATION_RESEARCH.md](web/Web-chatGPT/GD13MY_DSP_ACCELERATION_RESEARCH.md)
+- [web/Web-chatGPT/WINCE_OEM_AUDIO_INTEGRATION.md](web/Web-chatGPT/WINCE_OEM_AUDIO_INTEGRATION.md)
+- [web/Web-chatGPT/phase8-authentication-followup-research.md](web/Web-chatGPT/phase8-authentication-followup-research.md)
+- [web/Web-chatGPT/phase8-open-headunit-release-analysis.md](web/Web-chatGPT/phase8-open-headunit-release-analysis.md)
+- [web/Web-chatGPT/phase8-tls-certificate-guide.md](web/Web-chatGPT/phase8-tls-certificate-guide.md)
+- [web/Web-chatGPT/temp.file](web/Web-chatGPT/temp.file)
+- [web/add.md](web/add.md)

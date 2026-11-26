@@ -6,16 +6,16 @@
 
 | 항목 | 확인 수준 | 근거 |
 |---|---|---|
-| 순정 지도 부팅 | 에뮬레이터 | [최신 인계](Codex-AARE-integration/FINAL_HANDOFF.md) |
-| AARE 800×480 영상·앱 목록 터치 | 이전 실폰+에뮬레이터 | [실폰 기록](Codex-AARE-integration/REAL_PHONE_TEST_RESULTS.md) |
-| USB 자동 실행·부팅 연결 대기 | ARM/API 및 v8 가상폰 첫 프레임 | [진행 기록](Codex-AARE-integration/PROGRESS.md) |
-| v8 실폰 자동 연결·재연결 | 미검증; 가상 재연결 픽셀 검증도 미완료 | [최신 인계](Codex-AARE-integration/FINAL_HANDOFF.md) |
-| 회귀시험 | 보고상 93개 통과, 1개 skip (원문 표기) | [진행 기록](Codex-AARE-integration/PROGRESS.md) |
-| GPU | WGL 선택 경로; readback 때문에 GDI 기본 유지 | [실지도 벤치](Free-model-research/hardware-acceleration/REAL_MAP_BENCHMARK.md) |
-| GPTimer | 전체 guest 처리량 +7.7%, 지도 구간 +0.9%; 체감 개선 미입증 | [실지도 벤치](Free-model-research/hardware-acceleration/REAL_MAP_BENCHMARK.md) |
-| DSP | VID1/DSP1 문자열·export 확인, IOCTL ABI 미입증; h264bsd 유지 | [DSP ABI](Free-model-research/hardware-acceleration/DSP_IOCTL_ABI.md) |
-| 실차 ±5% | 실측 기준 없음 | [가속 인계](Free-model-research/hardware-acceleration/FINAL_HANDOFF.md) |
-| 실차 설치 | 승인되지 않음; 복구 경로와 실제 MUSB 동작 미검증 | [실기 점검](Codex-AARE-integration/HARDWARE_READINESS.md), [위험 평가](PHASE6_BRICK_RISK_ASSESSMENT.md) |
+| 순정 지도 부팅 | 에뮬레이터 | [최신 인계](android-auto/aare/FINAL_HANDOFF.md) |
+| AARE 800×480 영상·앱 목록 터치 | 이전 실폰+에뮬레이터 | [실폰 기록](android-auto/aare/REAL_PHONE_TEST_RESULTS.md) |
+| USB 자동 실행·부팅 연결 대기 | ARM/API 및 v8 가상폰 첫 프레임 | [진행 기록](android-auto/aare/PROGRESS.md) |
+| v8 실폰 자동 연결·재연결 | 미검증; 가상 재연결 픽셀 검증도 미완료 | [최신 인계](android-auto/aare/FINAL_HANDOFF.md) |
+| 회귀시험 | 보고상 93개 통과, 1개 skip (원문 표기) | [진행 기록](android-auto/aare/PROGRESS.md) |
+| GPU | WGL 선택 경로; readback 때문에 GDI 기본 유지 | [실지도 벤치](hardware/hardware-acceleration/REAL_MAP_BENCHMARK.md) |
+| GPTimer | 전체 guest 처리량 +7.7%, 지도 구간 +0.9%; 체감 개선 미입증 | [실지도 벤치](hardware/hardware-acceleration/REAL_MAP_BENCHMARK.md) |
+| DSP | VID1/DSP1 문자열·export 확인, IOCTL ABI 미입증; h264bsd 유지 | [DSP ABI](hardware/hardware-acceleration/DSP_IOCTL_ABI.md) |
+| 실차 ±5% | 실측 기준 없음 | [가속 인계](hardware/hardware-acceleration/FINAL_HANDOFF.md) |
+| 실차 설치 | 승인되지 않음; 복구 경로와 실제 MUSB 동작 미검증 | [실기 점검](android-auto/aare/HARDWARE_READINESS.md), [위험 평가](safety/PHASE6_BRICK_RISK_ASSESSMENT.md) |
 
 이전 순정 Google Android Auto 신뢰 실패와 AARE 등록 인증서 성공은 다른 경로다. 실폰+에뮬레이터 성공은 실차 성공이 아니다. 기존 HARDWARE_READINESS의 자동 연결 설명은 v8 이전 상태이며 최신 자동 실행 상태는 PROGRESS와 FINAL_HANDOFF를 따른다.
 
