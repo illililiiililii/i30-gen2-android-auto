@@ -11,7 +11,7 @@ from gd13my_display import (CONFIG, CONTROL, DISPC, GFX_ATTRIBUTES, GFX_BA0, GFX
                             GFX_PIXEL_INC, GFX_ROW_INC, GFX_SIZE, LcdDisplay, TRANS_COLOR, VID1_REGISTERS)
 from gd13my_mmio import (ClockManager, DebugUart, EmptyI2c, GpTimer, MicomCdp, OmapIntc, OmapSdMa, OmapUart,
                          PowerRegisters, ReadOnlyHsMmc, SdMaIrq, SyncTimer, TouchController, boot_devices)
-from gd13my_musb import HostMusb, UsbTransferError
+from gd13my_musb import HostMusb, UsbTransferError, UsbTransferPending
 
 
 class MusbTransport:
@@ -99,6 +99,35 @@ class HostMusbTests(unittest.TestCase):
         musb.write(0x11c, 1, 0x22)
         musb.write(0x116, 2, 0x20)
         self.assertEqual(musb.read(0x116, 2), 4)
+
+    def test_bulk_in_can_nak_before_completing_or_be_cancelled(self):
+        musb = self.musb
+        musb.set_cable(True)
+        musb.write(0x114, 2, 64)
+        musb.write(0x11c, 1, 0x21)
+        attempts = iter((None, None, b'bulk', None))
+
+        def read(address, size):
+            self.assertEqual((address, size), (0x81, 64))
+            data = next(attempts)
+            if data is None:
+                raise UsbTransferPending
+            return data
+
+        self.transport.read = read
+        musb.write(0x116, 2, 0x20)
+        self.assertEqual(musb.read(0x116, 2), 0x20)
+        self.assertEqual(musb.read(4, 2), 0)
+        self.assertFalse(musb.retry_bulk_reads())
+        self.assertTrue(musb.retry_bulk_reads())
+        self.assertEqual(musb.read(4, 2), 2)
+        self.assertEqual(musb.read(0x116, 2), 1)
+        self.assertEqual(self.fifo_read(0x24, 4), b'bulk')
+
+        musb.write(0x116, 2, 0x20)
+        musb.write(0x116, 2, 0x10)  # FLUSHFIFO cancels the pending request.
+        self.assertFalse(musb.retry_bulk_reads())
+        self.assertEqual(musb.read(4, 2), 0)
 
     def test_bulk_mode_zero_dma_feeds_the_fifo_and_latches_a_separate_interrupt(self):
         musb = self.musb

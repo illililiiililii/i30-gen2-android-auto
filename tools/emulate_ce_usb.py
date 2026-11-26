@@ -877,6 +877,7 @@ def test_tls(path, openssl, exercise_projection=False):
         assert fingerprint == sha256(cert_der).hexdigest()
         assert f'i30 CE TLS loaded leaf SHA-256: {fingerprint}' in good['debug'], good
         assert f'i30 CE TLS sent leaf SHA-256: {fingerprint}' in good['debug'], good
+        assert f'i30 CE TLS received phone leaf SHA-256: {sha256(cert_der).hexdigest()}' in good['debug'], good
         for stage in ('handshake message received: 2', 'handshake message received: 11',
                       'handshake message received: 13', 'handshake message sent: 15',
                       'ChangeCipherSpec received.', 'negotiated version (decimal): 771'):
@@ -1019,6 +1020,8 @@ def test_tls(path, openssl, exercise_projection=False):
         aare = TlsUsbClient(path, aare_files, context)
         result = aare.attach()
         assert aare.authenticated and aare.closed_gracefully, result
+        for name in ('trust anchor', 'expected phone leaf', 'received phone leaf'):
+            assert f'i30 CE TLS {name} SHA-256: {fingerprint}' in result['debug'], result
         del aare_files['i30-aare-peer-sha256.txt']
         aare = TlsUsbClient(path, aare_files, context)
         result = aare.attach()

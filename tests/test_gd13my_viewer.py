@@ -72,6 +72,18 @@ class Gd13myWindowInputTests(unittest.TestCase):
         self.run.service_usb_test()
         self.run.phone_port.reconnect.assert_called_once_with()
 
+    def test_lowering_usb_clock_preserves_ticks_and_reschedules_both_polls(self):
+        self.run.clock_units = 640_000_000
+        self.run.irq_poll_at = self.run.next_poll_units = self.run.clock_units + 1024
+        self.run.usb_clock_units = 12_000_000
+        with patch('view_gd13my.emulate_gd13my.VIRTUAL_CPU_UNITS_PER_SECOND', 64_000_000):
+            prior_ticks = self.run.clock_ticks()
+            self.run.use_usb_clock()
+            self.assertEqual(self.run.clock_ticks(), prior_ticks)
+        self.assertEqual(self.run.clock_units, 120_000_000)
+        self.assertEqual(self.run.next_poll_units, self.run.clock_units)
+        self.assertEqual(self.run.irq_poll_at, self.run.clock_units)
+
     def test_projection_claims_once_after_complete_ce_usb_success(self):
         self.run.phone_port = Mock()
         self.run.usb_test_offset = 0

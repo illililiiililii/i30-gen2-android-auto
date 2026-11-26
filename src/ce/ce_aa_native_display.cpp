@@ -64,7 +64,7 @@ constexpr uint32_t wm_paint = 0xf, wm_erasebkgnd = 0x14, wm_lbuttondown = 0x201,
 constexpr uint32_t wm_mousemove = 0x200, wm_cancelmode = 0x1f, wm_capturechanged = 0x215;
 constexpr uint32_t wm_stock_display_changed = 0x8001;
 constexpr uintptr_t display_timer = 1;
-constexpr int black_brush = 4, dark_gray_brush = 3;
+constexpr int white_brush = 0, black_brush = 4, dark_gray_brush = 3;
 constexpr CeRect map_button{300, 324, 500, 370};
 constexpr CeRect cancel_button{150, 345, 390, 407}, help_button{410, 345, 650, 407};
 constexpr CeRect previous_button{72, 377, 252, 439}, next_button{310, 377, 490, 439};
@@ -75,16 +75,16 @@ struct GuidePage { const CE_WCHAR *title, *number; const CE_WCHAR *lines[5]; };
 constexpr GuidePage guide[] = {
     {L"AARE 소개", L"1 / 4", {
         L"AARE는 내비 화면에 앱을 표시하는 오픈소스 앱입니다.",
-        L"휴대폰에 AARE를 설치하고 USB로 연결하세요.",
+        L"휴대폰에 설치하고 순정 Android Auto 대신 실행하세요.",
         L"AARE 1.6.0은 Android 6 이상에 설치할 수 있습니다.",
         L"USB 화면과 터치에 루팅이 필요하지 않습니다.",
         L"일부 앱의 화면 또는 오디오에는 추가 권한이 필요합니다."}},
     {L"AARE 설치", L"2 / 4", {
-        L"휴대폰에서 github.com/prototux/AARE/releases",
-        L"공식 릴리스의 APK를 받아 실행하세요.",
-        L"설치가 차단되면 APK를 연 앱에 설치 권한을 허용하세요.",
-        L"AARE의 Advanced → Phone certificates를 여세요.",
-        L"이 수신기와 함께 준비한 휴대폰 인증서를 가져오세요."}},
+        L"공식 APK를 받아 휴대폰에 설치하세요.",
+        L"차단되면 APK를 연 앱에 설치를 허용하세요.",
+        L"AARE를 열어 Advanced에서",
+        L"Phone certificates → Import from file을 누르고",
+        L"수신기용 .p12 파일과 암호를 입력하세요."}},
     {L"USB 연결", L"3 / 4", {
         L"AARE를 열고 데이터 통신용 USB 케이블을 연결하세요.",
         L"USB 앱 선택에서 AARE를 고르고 접근을 허용하세요.",
@@ -99,6 +99,15 @@ constexpr GuidePage guide[] = {
         L"화면이 나오지 않거나 연결이 끊기면 USB를 다시 연결하세요."}},
 };
 constexpr unsigned guide_pages = sizeof(guide) / sizeof(guide[0]);
+// QR version 3-M for https://github.com/prototux/AARE/releases, with one 29-bit row per word.
+constexpr uint32_t release_qr[] = {
+    0x1fdbc87fU, 0x10454541U, 0x1757ac5dU, 0x1745ee5dU, 0x174ac45dU,
+    0x10501c41U, 0x1fd5557fU, 0x00035600U, 0x14623225U, 0x0f2e77e3U,
+    0x0c547b7dU, 0x14b66098U, 0x1aed2261U, 0x11283763U, 0x0c61aaf1U,
+    0x16aa7760U, 0x1d6d11c1U, 0x01026e67U, 0x1d746e19U, 0x052e5150U,
+    0x1ac6f5faU, 0x001c991dU, 0x1fdb3151U, 0x104ca712U, 0x174dabfaU,
+    0x1749139dU, 0x1751ec93U, 0x10494538U, 0x1fda7919U,
+};
 
 struct Projection {
     CE_HANDLE map, cancel, worker, video, heading, body;
@@ -199,9 +208,28 @@ void paint_guide(CE_HANDLE dc, const Projection *state)
     draw_text(dc, state->heading, page.title, {72, 35, 728, 100});
     draw_text(dc, state->body, page.number, {665, 48, 765, 88});
     int y = 120;
+    const bool install = state->guide_page == 2;
     for (const auto *line : page.lines) {
-        draw_text(dc, state->body, line, {24, y, 776, y + 40});
+        draw_text(dc, state->body, line, {24, y, install ? 550 : 776, y + 40});
         y += 46;
+    }
+    if (install) {
+        constexpr int left = 578, top = 125, scale = 5, quiet = 4, modules = 29;
+        constexpr CeRect paper{left, top, left + (modules + 2 * quiet) * scale,
+                               top + (modules + 2 * quiet) * scale};
+        FillRect(dc, &paper, GetStockObject(white_brush));
+        CE_HANDLE ink = GetStockObject(black_brush);
+        for (int row = 0; row < modules; ++row) {
+            for (int col = 0; col < modules; ++col) {
+                if (release_qr[row] & (1U << (modules - 1 - col))) {
+                    int x = left + (quiet + col) * scale, y = top + (quiet + row) * scale;
+                    const CeRect cell{x, y, x + scale, y + scale};
+                    FillRect(dc, &cell, ink);
+                }
+            }
+        }
+        draw_text(dc, state->body, L"공식 다운로드", {555, 316, 784, 347});
+        draw_text(dc, state->body, L"github.com/prototux/AARE/releases", {24, 342, 550, 374});
     }
     if (state->guide_page > 1)
         paint_button(dc, state->body, L"이전", previous_button);

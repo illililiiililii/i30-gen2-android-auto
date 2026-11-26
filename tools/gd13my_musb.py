@@ -19,6 +19,10 @@ class UsbTransferError(Exception):
     """The backend could not complete a guest USB request."""
 
 
+class UsbTransferPending(Exception):
+    """The device has not answered a bulk IN token yet."""
+
+
 @dataclass
 class Endpoint:
     regs: bytearray = field(default_factory=lambda: bytearray(16))
@@ -42,6 +46,7 @@ class HostMusb(ResetBank):
         self.endpoints = [Endpoint() for _ in range(16)]
         self.setup = None
         self.control_data = bytearray()
+        self.pending_reads = set()
         self.dma_memory = None
 
     def interrupt(self, reg, bits):
@@ -63,6 +68,7 @@ class HostMusb(ResetBank):
         self.connected, self.high_speed = connected, high_speed
         self.setup = None
         self.control_data.clear()
+        self.pending_reads.clear()
         for endpoint in self.endpoints:
             endpoint.input.clear()
             endpoint.output.clear()
@@ -158,6 +164,14 @@ class HostMusb(ResetBank):
             self.endpoints = [Endpoint() for _ in range(16)]
             self.setup = None
             self.control_data.clear()
+            self.pending_reads.clear()
+
+    def retry_bulk_reads(self):
+        pending = self.pending_reads.copy()
+        for number in pending:
+            if number in self.pending_reads:
+                self.bulk(self.endpoints[number], number, out=False)
+        return bool(pending - self.pending_reads)
 
     def service_dma(self, channel):
         reg = DMA_CONTROL + DMA_STRIDE * channel
@@ -252,6 +266,8 @@ class HostMusb(ResetBank):
 
     def bulk(self, endpoint, number, out):
         reg, packet, flush = (2, 1, 8) if out else (6, REQUEST, 16)
+        if not out:
+            self.pending_reads.discard(number)
         flags = endpoint.read(reg)
         if flags & flush:
             (endpoint.output if out else endpoint.input).clear()
@@ -276,6 +292,9 @@ class HostMusb(ResetBank):
                 if len(endpoint.input) < size:
                     result &= ~RX_AUTO_REQUEST
                 result |= RX_READY
+        except UsbTransferPending:
+            self.pending_reads.add(number)
+            return  # Preserve REQPKT and wait for data or cancellation by the guest.
         except UsbTransferError:
             result |= 4  # Host ERROR.
             endpoint.output.clear()

@@ -249,6 +249,7 @@ class WindowedRun(KernelRun):
             ticks = self.clock_ticks()
             emulate_gd13my.VIRTUAL_CPU_UNITS_PER_SECOND = rate
             self.clock_units = (ticks * rate + TIMER_HZ - 1) // TIMER_HZ
+            self.next_poll_units = self.irq_poll_at = self.clock_units
             self.usb_clock_units = None
 
     def start_navigation(self):

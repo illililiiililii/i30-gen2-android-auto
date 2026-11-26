@@ -5,12 +5,12 @@ from struct import unpack_from
 import sys
 from time import monotonic
 
-from gd13my_musb import HostMusb, UsbTransferError
+from gd13my_musb import HostMusb, UsbTransferError, UsbTransferPending
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 
 from i30_receiver.cli import libusb_path
-from i30_receiver.transport import Disconnected, TransportError
+from i30_receiver.transport import Disconnected, Timeout, TransportError
 from i30_receiver.usb_pc import PyUsb
 
 
@@ -36,6 +36,7 @@ class PhonePort:
         self.version_packet = None
         self.control_packet_size = 64
         self.next_poll = float('inf') if wait_for_test else 0
+        self.next_bulk_retry = 0
         self.controller = HostMusb(self)
         if wait_for_test:
             self.notify(f'물리 USB {self.port} · CE 시험 시작 대기')
@@ -78,6 +79,9 @@ class PhonePort:
     def poll(self):
         now = monotonic()
         if now < self.next_poll:
+            if self.controller.pending_reads and now >= self.next_bulk_retry:
+                self.next_bulk_retry = now + 0.005
+                return self.controller.retry_bulk_reads()
             return False
         self.next_poll = now + 0.25
         try:
@@ -132,7 +136,7 @@ class PhonePort:
             self.notify(f'Windows USB 접근 실패 · {error}')
             return False
 
-    def exchange(self, label, function, *args, **kwargs):
+    def exchange(self, label, function, *args, pending_on_timeout=False, **kwargs):
         try:
             return self.backend.invoke(function, *args, **kwargs)
         except Disconnected as error:
@@ -141,6 +145,8 @@ class PhonePort:
             self.notify('물리 USB 재열거 대기')
             raise UsbTransferError(str(error)) from error
         except TransportError as error:
+            if pending_on_timeout and isinstance(error, Timeout):
+                raise UsbTransferPending from error
             self.notify(f'{label} 실패 · {error}')
             raise UsbTransferError(str(error)) from error
 
@@ -209,7 +215,9 @@ class PhonePort:
         link = self.accessory_link()
         if address != link.input_endpoint or not 0 < size <= 512:
             raise UsbTransferError('Unknown accessory input endpoint or packet size')
-        data = bytes(self.exchange('USB bulk 입력', link.device.read, address, size, timeout=500))
+        # A libusb read timeout can mean repeated NAKs while the app prepares data.
+        data = bytes(self.exchange('USB bulk 입력', link.device.read, address, size,
+                                   timeout=15, pending_on_timeout=True))
         if self.version_input is not None:
             self.version_input.extend(data)
             if len(self.version_input) >= 12:

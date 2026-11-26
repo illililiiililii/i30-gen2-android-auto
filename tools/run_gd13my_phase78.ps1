@@ -3,6 +3,7 @@ param(
     [string]$UsbPort = 'auto',
     [ValidateRange(1, 86400)][int]$Seconds = 7200,
     [ValidateRange(1.0, 64.0)][double]$GuestClockMHz = 4.5,
+    [ValidateRange(1.0, 64.0)][double]$UsbClockMHz,
     [switch]$AutoCalibrate,
     [switch]$FastStorage,
     [switch]$BootTrace,
@@ -39,7 +40,10 @@ if ($StockProjectionImage) {
     if (-not $phaseManifest.stock_display_sha256 -or $phaseManifest.emulator_utc_offset -le 0) {
         throw 'The DiskA manifest is missing the stock display patches or the UTC mailbox.'
     }
-    $clockArgs = @('--host-utc-offset', [string]$phaseManifest.emulator_utc_offset, '--usb-clock-mhz', '64')
+    if (!$PSBoundParameters.ContainsKey('UsbClockMHz')) {
+        $UsbClockMHz = if ($phaseManifest.tls_profile -eq 'aare') { 12.0 } else { 64.0 }
+    }
+    $clockArgs = @('--host-utc-offset', [string]$phaseManifest.emulator_utc_offset)
     $AutoCalibrate = $true
 } elseif ($NativeTls -or $OwnedWindowCandidate) {
     $phaseBuild = Join-Path $phaseRoot 'build\gd13my-ce-video-focus'
@@ -54,7 +58,11 @@ if ($StockProjectionImage) {
     if ($phaseManifest.emulator_utc_offset -le 0) {
         throw 'GD13MY emulator UTC mailbox is missing from the image manifest.'
     }
-    $clockArgs = @('--host-utc-offset', [string]$phaseManifest.emulator_utc_offset, '--usb-clock-mhz', '64')
+    if (!$PSBoundParameters.ContainsKey('UsbClockMHz')) { $UsbClockMHz = 64.0 }
+    $clockArgs = @('--host-utc-offset', [string]$phaseManifest.emulator_utc_offset)
+}
+if ($UsbClockMHz) {
+    $clockArgs += @('--usb-clock-mhz', $UsbClockMHz.ToString([Globalization.CultureInfo]::InvariantCulture))
 }
 $phaseNavi = Join-Path $phaseRoot 'firmware\extracted\GD13MY\APP\00d12869_GDdNavi.exe'
 $phaseRom = Join-Path $phaseRoot 'firmware\extracted\GD13MY\BSP\0002dfc7_kernel'

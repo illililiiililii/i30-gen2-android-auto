@@ -46,6 +46,7 @@ typedef struct ProtectedMessage {
 } ProtectedMessage;
 
 typedef struct HandshakeTrace {
+    br_sha256_context leaf_hash;
     uint8_t record[5], message[4], certificate[6];
     unsigned record_used, message_used, certificate_used;
     unsigned record_left, message_left, leaf_left;
@@ -64,7 +65,6 @@ typedef struct Session {
     br_x509_certificate identity[CLIENT_CHAIN_MAX];
     PinnedChain pinned;
     HandshakeTrace tx, rx;
-    br_sha256_context sent_leaf;
     uint8_t io[BR_SSL_BUFSIZE_BIDI];
     uint8_t wire[TLS_FRAME_MAX + 6U];
     uint8_t control[0x4000];
@@ -396,7 +396,7 @@ static unsigned big_endian(const uint8_t *bytes, unsigned size)
     return value;
 }
 
-static void trace_certificate(Session *s, HandshakeTrace *trace, const uint8_t *bytes, unsigned size)
+static void trace_certificate(HandshakeTrace *trace, const CE_WCHAR *label, const uint8_t *bytes, unsigned size)
 {
     while (size && trace->certificate_used < sizeof(trace->certificate)) {
         trace->certificate[trace->certificate_used++] = *bytes++;
@@ -406,18 +406,18 @@ static void trace_certificate(Session *s, HandshakeTrace *trace, const uint8_t *
             unsigned leaf_size = big_endian(trace->certificate + 3, 3);
             if (list_size >= 3 && leaf_size <= list_size - 3)
                 trace->leaf_left = leaf_size;
-            br_sha256_init(&s->sent_leaf);
+            br_sha256_init(&trace->leaf_hash);
         }
     }
     if (trace->leaf_left && size) {
         if (size > trace->leaf_left)
             size = trace->leaf_left;
-        br_sha256_update(&s->sent_leaf, bytes, size);
+        br_sha256_update(&trace->leaf_hash, bytes, size);
         trace->leaf_left -= size;
         if (!trace->leaf_left) {
             uint8_t digest[32];
-            br_sha256_out(&s->sent_leaf, digest);
-            debug_fingerprint(L"i30 CE TLS sent leaf SHA-256: ", digest);
+            br_sha256_out(&trace->leaf_hash, digest);
+            debug_fingerprint(label, digest);
         }
     }
 }
@@ -437,8 +437,9 @@ static void trace_handshake(Session *s, HandshakeTrace *trace, const uint8_t *by
         }
         unsigned take = size < trace->message_left ? size : trace->message_left;
         unsigned type = trace->message[0];
-        if (trace == &s->tx && type == 11U)
-            trace_certificate(s, trace, bytes, take);
+        if (type == 11U)
+            trace_certificate(trace, trace == &s->tx ? L"i30 CE TLS sent leaf SHA-256: " :
+                              L"i30 CE TLS received phone leaf SHA-256: ", bytes, take);
         bytes += take;
         size -= take;
         trace->message_left -= take;
@@ -655,6 +656,11 @@ static const CE_WCHAR *configure(Session *s, CE_HANDLE ca_file, int aare)
     s->anchor = (br_x509_trust_anchor){{s->dn, s->dn_size}, BR_X509_TA_CA, *key};
     br_ssl_client_init_full(&s->client, &s->validation, &s->anchor, 1);
     if (pin_size) {
+        br_sha256_init(&hash);
+        br_sha256_update(&hash, ca.data, ca.data_len);
+        br_sha256_out(&hash, digest);
+        debug_fingerprint(L"i30 CE TLS trust anchor SHA-256: ", digest);
+        debug_fingerprint(L"i30 CE TLS expected phone leaf SHA-256: ", s->pinned.expected);
         s->pinned.vtable = &pinned_chain;
         s->pinned.chain = &s->validation.vtable;
         br_ssl_engine_set_x509(&s->client.eng, &s->pinned.vtable);
@@ -806,8 +812,12 @@ static int secure_read_fragment(Session *s, const I30Link *link, unsigned *chann
     int received = read_exact(link, header, sizeof(header));
     if (poll && link->poll_read)
         link->poll_read(link->context, 0, 0);
-    if (!received || (header[1] & 0xf8U) != 8U)
+    if (!received)
         return -1;
+    if ((header[1] & 0xf8U) != 8U) {
+        debug_number(L"i30 CE protected AAP header flags rejected: ", header[1]);
+        return -1;
+    }
     *channel = header[0];
     *flags = header[1] & 7U;
     length = ((unsigned)header[2] << 8) | header[3];
@@ -841,7 +851,12 @@ static int secure_read_fragment(Session *s, const I30Link *link, unsigned *chann
             br_ssl_engine_recvapp_ack(engine, capacity);
         }
     }
-    if (!decoded || br_ssl_engine_last_error(engine))
+    unsigned error = br_ssl_engine_last_error(engine);
+    if (error) {
+        debug_number(L"i30 CE protected AAP BearSSL error: ", error);
+        return -1;
+    }
+    if (!decoded)
         return -1;
     return (int)decoded;
 }

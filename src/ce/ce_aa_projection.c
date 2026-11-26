@@ -33,6 +33,18 @@ typedef struct Projection {
     uint64_t touch_time;
 } Projection;
 
+static void report_rejected_message(unsigned channel, unsigned flags, unsigned code)
+{
+    static const char hex[] = "0123456789abcdef";
+    CE_WCHAR line[] = L"i30 CE projection rejected AAP channel 00 flags 0 id 0000.\r\n";
+    line[39] = hex[(channel >> 4) & 15U];
+    line[40] = hex[channel & 15U];
+    line[48] = hex[flags & 15U];
+    for (unsigned i = 0; i < 4; ++i)
+        line[53 + i] = hex[(code >> (12U - 4U * i)) & 15U];
+    OutputDebugStringW(line);
+}
+
 CE_HANDLE i30_projection_surface(void)
 {
 #ifdef I30_VIRTUAL_LCD_BENCH
@@ -333,6 +345,7 @@ static int control(const I30SecureChannel *wire, Projection *video, unsigned cod
         service != VIDEO_CHANNEL || video->state != ADVERTISED)
         return 0;
     video->state = OPENED;
+    OutputDebugStringW(L"i30 CE video channel opened.\r\n");
     return wire->send(wire->context, VIDEO_CHANNEL, CONTROL, accepted, sizeof(accepted));
 }
 
@@ -389,6 +402,8 @@ static int media(const I30SecureChannel *wire, Projection *video, unsigned code,
         video->decoder = i30_video_open();
         video->session = one;
         video->state = STREAMING;
+        if (video->decoder)
+            OutputDebugStringW(L"i30 CE H.264 video stream started.\r\n");
         return video->decoder != 0;
     case STOP:
         reset_video(video);
@@ -419,8 +434,10 @@ int i30_projection_video(const I30SecureChannel *wire, CE_HANDLE window, int inp
         uint8_t *message;
         int size = wire->receive(wire->context, &channel, &flags, video_buffer, capacity, &message,
                                  video.input_bound ? poll_touch : 0, &video);
-        if (size < 2)
+        if (size < 2) {
+            OutputDebugStringW(L"i30 CE projection could not receive a protected AAP message.\r\n");
             break;
+        }
         code = ((unsigned)message[0] << 8) | message[1];
         if (channel == 0 && !flags) {
             if (code == GOODBYE) {
@@ -441,14 +458,18 @@ int i30_projection_video(const I30SecureChannel *wire, CE_HANDLE window, int inp
             continue;
         }
         if (channel == INPUT_CHANNEL && video.input) {
-            if (!input_message(&video, flags, code, message, (unsigned)size))
+            if (!input_message(&video, flags, code, message, (unsigned)size)) {
+                report_rejected_message(channel, flags, code);
                 break;
+            }
             continue;
         }
         if (channel != VIDEO_CHANNEL ||
             !(flags == CONTROL ? control(wire, &video, code, message, (unsigned)size) :
-              !flags && media(wire, &video, code, message, (unsigned)size)))
+              !flags && media(wire, &video, code, message, (unsigned)size))) {
+            report_rejected_message(channel, flags, code);
             break;
+        }
     }
     if (video.touch_enabled) {
         uint32_t result;
