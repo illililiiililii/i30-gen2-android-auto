@@ -139,7 +139,9 @@ class LcdDisplay(ResetBank):
             self._last_scanout = self._last_capture = None
             return {'status': status}, None
         base, width, height, stride, span = layout
-        source = bytes(read_ram(base, span))
+        # Unicorn already returns a detached bytearray snapshot. Converting it
+        # to bytes duplicates the full 800x480 plane on every LCD poll.
+        source = read_ram(base, span)
         video, _ = self.layout(self.video, contains_ram)
         backdrop = None
         key = self.color_key
@@ -147,7 +149,7 @@ class LcdDisplay(ResetBank):
         if video is not None and video[1:3] == (width, height) and key is not None:
             candidate_key = struct.pack('<H', key)
             if candidate_key in source:
-                backdrop = bytes(read_ram(video[0], video[4]))
+                backdrop = read_ram(video[0], video[4])
                 key_bytes = candidate_key
         scanout = (layout, source, video if backdrop is not None else None, backdrop, self.color_key)
         if scanout == self._last_scanout:

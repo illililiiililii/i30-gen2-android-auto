@@ -2,18 +2,19 @@
 
 ## 이번 작업
 
-- `npx skills add aicodeking/leanrea -g -a codex -y`로 Codex 사용자 LeanREA 설치. 사용자 경로는 `%USERPROFILE%\.agents\skills\leanrea`다. CLI 명령은 없고 일반 PE 분석 도구를 안내하는 분석 skill이다. Rizin 0.9.1과 기존 PE/ROM evidence를 우선 활용했다.
-- 순정 GLES 호출 53개에 대한 기존 HLE 경로는 있었지만 `BitmapGL`이 `Microsoft / GDI Generic / OpenGL 1.1`을 선택하는 것을 직접 확인했다.
-- `tools/gd13my_software_gl.py`에 숨겨진 WGL 창 기반 GPU 컨텍스트를 추가했다. 기존 GDI bitmap 경로도 유지한다. `GD13MY_GL_BACKEND=hardware`로 선택하고, 기본값 `software`로 안정 경로를 보존한다. 에뮬레이터 로그와 `map_report`에 실제 renderer를 남긴다.
-- `tools/bench_gd13my_gl.py`로 실제 WGL GPU와 GDI renderer를 비교했다. 이 scene에서는 GPU가 총 frame time을 줄이지 않아 기본값으로 승격하지 않았다.
-- DSP ABI가 증명되지 않아 AARE decoder는 바꾸지 않았다. 하드웨어/영상 연구 문서 8개를 이 폴더에 정리했다.
+- 실제 stock GDdNavi 지도 boot와 동일한 DiskA state/input으로 software WGL 비교를 2회씩 실행했다. 로그/재현 명령 및 제한 사항은 [실지도 벤치마크](REAL_MAP_BENCHMARK.md), 요약 통계는 [성능 결과](PERFORMANCE_RESULTS.md)에 있다.
+- 기존 DLL을 쓰는 GPTimer baseline과 C native GPTimer read를 비교하는 선택 경로를 추가했다. native 카운터는 기존 32.768 kHz Python 기준 모델과 8개 clock 지점에서 일치시켰다. 전체 실행 guest clock throughput 중앙값은 약 7.7% 높았지만 지도 구간 처리량은 +1% 미만이며 표본 변동이 커 실질적인 지도 체감 개선으로 확정하지 않았다. 기본 DLL과 timer 모델은 변경하지 않았다.
+- `LcdDisplay.capture()`에서 Unicorn이 반환한 detached `bytearray`를 `bytes()`로 다시 복사하던 동작을 제거했다. 실제 지도 전체 실행 개선은 오차/환경 변동과 분리해 입증하지 못했다. 기존 LCD RGB565 변환과 snapshot 보존은 유지했다.
+- WGL 실제 지도 GPU 경로는 readback/copy가 GDI보다 느렸다. software renderer 기본값을 보존했다. AARE decoder는 h264bsd로 유지했고 DSP ABI는 아직 확인되지 않았다.
+- `python -m unittest discover -s tests -v`: 92개 통과 (2026-11-27, 새 C timer DLL 사용). viewer USB-clock 회귀도 수정 후 통과.
 
-## 미완료 / 다음 우선순위
+## 확인되지 않은 범위와 다음 우선순위
 
-1. 실제 GDdNavi 지도 route 입력을 GPU/GDI로 반복해 `guest_swaps`, frame hash tolerance, map copy time, 전체 boot CPU를 같은 DiskA state에서 비교한다.
-2. `LibMMCodec.dll` H.264 create/open/decode/deinit 호출의 IOCTL 상수, 포인터 크기와 구조체를 좁히고 `videodev.dll` dispatcher 및 DSP bridge까지 call chain을 기록한다. 함수 전체 디컴파일 대신 문자열 xref와 각 호출 함수만 분석한다.
-3. 공개 ROM의 `videodev.dll`/`dsp_bridge.dll` 및 BSP registry의 메모리/IRQ/펌웨어 항목을 현재 추출 자료에서 다시 대조한다. 보드 SoC SKU, GPU/DSP 클럭은 미확인으로 유지한다.
-4. 실기기 기준 측정이 확보되면 CPU/GPU/DSP/DMA/스토리지/USB/LCD를 각각 비교한다. 실기기 데이터 전에는 ±5% 달성을 주장하지 않는다.
+1. 지도 stationary, mock drive, pan, zoom, rotate, route, menu transition, 1/3/5 minute sustain을 동일 조건으로 benchmark한다. 이번 touch set은 startup accept + map pan only; route guidance와 physical vehicle input은 미측정이다.
+2. `LibMMCodec.dll` 및 `VID1:`/`DSP1:` IOCTL 인자 구조와 버퍼 계약은 정적 자료만으로 입증되지 않았다. 추가 분석은 [DSP IOCTL 상태](DSP_IOCTL_ABI.md)에 적는다.
+3. AARE USB/TLS/AAP 수신·h264bsd/GDI 경로를 보존한다. DSP ABI가 확인되기 전에는 실순정 decoder 호출을 추가하지 않는다.
+4. 실기기 기준 측정이 확보되면 CPU/GPU/DSP/DMA/스토리지/USB/LCD를 비교한다. ±5% 목표는 실측 근거가 없어 미검증이다.
+5. 실제 펌웨어 빌드 전 별도 브릭 안전 검토가 필요하다. [브릭 예방 메모](BRICK_PREVENTION_NOTES.md)를 확인한다.
 
 ## 재현/검증
 
@@ -24,4 +25,4 @@ $env:GD13MY_GL_BACKEND = 'hardware'   # WGL PoC 사용
 $env:GD13MY_GL_BACKEND = 'software'   # 기존 렌더러
 ```
 
-다음 검증: Python compile, GL PoC pixel/frame 시험, `python -m unittest discover -s tests`. 기존 실폰 USB 에뮬레이터/뷰어는 이 세션에서도 이미 실행 중이었으므로 종료하지 않는다. 작업 트리 변경은 커밋되지 않았으며 원격 main에 반영하지 않았다.
+실지도 벤치 명령은 [REAL_MAP_BENCHMARK.md](REAL_MAP_BENCHMARK.md)에, GPU readback 결과는 [GPU_READBACK_OPTIMIZATION.md](GPU_READBACK_OPTIMIZATION.md)에 있다. USB 스마트폰 실물, AARE 실시간 수신, 차량 실기기는 이번 세션에서 검증하지 않았다. 호스트 가속은 끌 수 있으며 순정 펌웨어/BSP/실차 저장장치에는 어떤 기록도 하지 않았다.

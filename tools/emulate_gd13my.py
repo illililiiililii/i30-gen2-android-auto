@@ -183,6 +183,9 @@ class KernelRun:
         self.fault = None
         self.ttbr0 = None
         self.high_ram_zeroed = False
+        self._native_gptimer = None
+        self._gptimer_bank = None
+        self._reported_native_timer_reads = 0
         targets = {'bin_entry': self.entry, 'oem_table_reference': self.table - 12 - int(self.rom['address_alias_delta'], 16),
                    'set_ttbr0': 0x8000ae24, 'kernel_virtual_entry': 0x8400ae60,
                    'clear_high_ram_call': 0x84017eec, 'clear_high_ram_return': 0x84017ef0}
@@ -206,8 +209,29 @@ class KernelRun:
                 if fifo is not None:
                     bank.attach_fifo(fifo)
                     continue
+            if self._native_clock is not None and name == 'GPTIMER1':
+                timer = self._native_clock.map_gptimer(
+                    self.cpu, base, len(bank.data), self.write_mmio, target, bank,
+                    VIRTUAL_CPU_UNITS_PER_SECOND, TIMER_HZ)
+                if timer is not None:
+                    self._native_gptimer, self._gptimer_bank = timer, bank
+                    continue
             self.cpu.mmio_map(base, len(bank.data), self.read_mmio, target, self.write_mmio, target)
         self.boot_trace = BootTrace(self.cpu, self.rom, read, self.clock_ticks, self.contains_ram) if boot_trace else None
+
+    def sync_native_gptimer(self, units_per_second=None):
+        if getattr(self, '_native_gptimer', None) is not None:
+            rate = VIRTUAL_CPU_UNITS_PER_SECOND if units_per_second is None else units_per_second
+            self._native_gptimer.sync(self._gptimer_bank, rate, TIMER_HZ)
+
+    def collect_native_timer_reads(self):
+        if self._native_gptimer is None:
+            return
+        count = self._native_gptimer.reads
+        delta = count - self._reported_native_timer_reads
+        if delta:
+            self.devices['GPTIMER1']['reads'] += delta
+            self._reported_native_timer_reads = count
 
     def contains_ram(self, address, length):
         return any(start <= address and address + length <= start + size for start, size in self.ram)
@@ -308,6 +332,8 @@ class KernelRun:
     def write_mmio(self, _, offset, size, value, target):
         base, name, bank = target
         bank.write(offset, size, value)
+        if bank is self._gptimer_bank:
+            self.sync_native_gptimer()
         if self.dma is not None and (bank is self.dma or bank is self.card):
             self.dma.service()
         self.devices[name]['writes'] += 1
@@ -414,6 +440,7 @@ class KernelRun:
                 if entry is None:
                     error = str(exc)
                     break
+        self.collect_native_timer_reads()
         read_counts, mmio_devices = self.read_counts, self.devices
         if self.card is not None and self.card.fifo is not None:
             device, base = f'HSMMC{self.slot}', MMC_BASES[self.slot - 1]

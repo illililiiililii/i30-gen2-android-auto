@@ -1,6 +1,7 @@
 """Count Unicorn blocks in C while the WinCE scheduler remains in Python."""
 
-from ctypes import CDLL, CFUNCTYPE, Structure, byref, c_size_t, c_uint, c_uint32, c_uint64, c_void_p
+from ctypes import (CDLL, CFUNCTYPE, Structure, byref, c_size_t,
+                    c_uint, c_uint8, c_uint32, c_uint64, c_void_p, cast)
 from os import environ
 from pathlib import Path
 
@@ -18,6 +19,7 @@ class MmcFifo(Structure):
 class BlockClock(Structure):
     _fields_ = [('units', c_uint64), ('service_at', c_uint64), ('prefetch_pc', c_uint64),
                 ('watch_vfp', c_uint64), ('service', BLOCK_HOOK)]
+
 
     def __init__(self, cpu, service, library):
         from unicorn.unicorn_py3.unicorn import uccallback, uclib
@@ -59,6 +61,46 @@ class BlockClock(Structure):
             raise UcError(status)
         cpu._mmio_callbacks[base, base + size] = (read_cb, write_cb)
         return fifo
+
+    def map_gptimer(self, cpu, base, size, write, target, timer, units_per_second,
+                    ticks_per_second):
+        from unicorn.unicorn_py3.unicorn import MMIO_WRITE_CFUNC, uccallback, uclib
+
+        if not hasattr(self.library, 'gd13my_gptimer_read'):
+            return None
+        state = GpTimerRead(self, timer, units_per_second, ticks_per_second)
+        read_cb = self.library.gd13my_gptimer_read
+        read_cb.restype = c_uint64
+        read_cb.argtypes = (c_void_p, c_uint64, c_uint, c_void_p)
+
+        @uccallback(cpu, MMIO_WRITE_CFUNC)
+        def write_cb(engine, offset, width, value, _):
+            write(engine, offset, width, value, target)
+
+        status = uclib.uc_mmio_map(cpu._uch, base, size, read_cb, byref(state), write_cb, None)
+        if status:
+            raise UcError(status)
+        cpu._mmio_callbacks[base, base + size] = (state, state.data_buffer, write_cb)
+        return state
+
+
+class GpTimerRead(Structure):
+    _fields_ = [('data', c_void_p), ('clock_units', c_void_p), ('epoch', c_uint64),
+                ('units_per_second', c_uint64), ('reads', c_uint64),
+                ('ticks_per_second', c_uint32), ('running', c_uint32)]
+
+    def __init__(self, clock, timer, units_per_second, ticks_per_second):
+        self.data_buffer = (c_uint8 * len(timer.data)).from_buffer(timer.data)
+        super().__init__(cast(self.data_buffer, c_void_p),
+                         cast(byref(clock, BlockClock.units.offset), c_void_p),
+                         0, 0, 0, 0, 0)
+        self.sync(timer, units_per_second, ticks_per_second)
+
+    def sync(self, timer, units_per_second, ticks_per_second):
+        self.epoch = timer.epoch or 0
+        self.units_per_second = units_per_second
+        self.ticks_per_second = ticks_per_second
+        self.running = int(timer.epoch is not None)
 
 
 def install_block_clock(cpu, service):

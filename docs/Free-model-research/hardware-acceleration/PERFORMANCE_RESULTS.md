@@ -19,3 +19,18 @@ python tools/bench_gd13my_gl.py --frames 10 --warmup 2 --output build/hardware-a
 ```
 
 실행 JSON은 build/ 아래에 남겨 저장소에 커밋하지 않는다. 이전 O2 h264bsd 및 sustained navigation 기준은 [에뮬레이터 성능 기준](../../Codex-AARE-integration/EMULATOR_PERFORMANCE.md)에 있다.
+
+## GDdNavi 실지도 및 계측 변경 (2026-11-27 KST)
+
+같은 GD13MY kernel/media/App volume, 복사한 DiskA SQLite 시작 상태, `map-pan-input.json` 5개 터치 이벤트로 stock map viewer를 headless 실행했다. 지도 준비까지 포함한 실제 GDdNavi 작업이다. 재현 스크립트와 경로는 [실지도 벤치마크](REAL_MAP_BENCHMARK.md)에 기록했다.
+
+| 경로 | 2회 전체 guest clock 단위/s 중앙값 | 지도 준비 후 guest s/wall s 중앙값 | 지도 준비 이후 LCD 변경 프레임 | CPU% 중앙값 | Peak WS 중앙값 |
+|---|---:|---:|---:|---:|---:|
+| 기존 Python GPTimer MMIO | 23.58M | 3.702 | 3 | 92.9% | 461.7 MiB |
+| native C GPTimer read | 25.39M | 3.737* | 3 | 92.5% | 465.3 MiB |
+
+`*` 지도 구간 지표의 두 표본은 4.365와 3.109로 분산이 커 유의한 개선으로 판정하지 않는다. 전체 guest clock 처리량의 표본 중앙값은 약 +7.7%지만 각 조건 2회뿐이고 CPU 부하가 90%대이며 호스트 scheduler 변동이 나타났다. 지도 준비 후 화면 변경 프레임은 양쪽 모두 대개 3회였고 이 입력은 회전/확대/경로 안내 장면이 아니다. 따라서 체감 지도 FPS 향상은 확인되지 않았고 이 기능을 기본 DLL에 포함하거나 성능 성공으로 선언하지 않는다. C read path는 ABI가 맞는 새 DLL에만 노출되는 선택 기능이다.
+
+다른 반복 측정에서 `LcdDisplay.capture()` 입력이 이미 detached `bytearray`임을 확인하고 매 LCD poll마다 `bytes()`로 중복 복사하던 그래픽 plane과 video backdrop 변환을 제거했다. 기존 bitmap/LCD 결과 형식과 게스트 RAM snapshot 소유권은 바뀌지 않는다. 동등한 화면 결과 및 회귀는 확인했으나, 실지도 전체 런 median에서 독립된 유의 성능 이득은 입증되지 않았다. 초당 LCD poll 성능 및 캡처 구간 지표는 [GPU/readback 기록](GPU_READBACK_OPTIMIZATION.md)을 참조한다.
+
+기존 실제 map GPU/GDI 결과는 WGL GPU가 0.2495s/5 copy 대 GDI 0.0298s/5 copy로 약 8.4배 오래 걸렸고, CPU/working set도 증가했다. 실제 scene에선 GPU를 기본값으로 올리지 않았다.
