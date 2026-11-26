@@ -1,8 +1,10 @@
+import importlib.util
 from pathlib import Path
 import struct
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 import zlib
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
@@ -165,9 +167,40 @@ class HostMusbTests(unittest.TestCase):
         self.assertEqual(musb.read(0x21c, 4), 4)
         self.assertEqual(musb.read(0x116, 2) & 1, 1)
         self.assertEqual(musb.read(0x118, 2), 0)
+        self.assertEqual(musb.endpoints[1].short_dma_count, 4)
         musb.write(0x116, 2, 0x8000)  # Software acknowledges the drained short packet.
         self.assertEqual(musb.read(0x116, 2) & 1, 0)
         self.assertEqual(musb.read(0x200, 1), 2)
+
+    @unittest.skipUnless(importlib.util.find_spec('unicorn'), 'Requires Unicorn')
+    def test_stock_hcd_retires_only_a_matching_short_bulk_dma(self):
+        from unicorn import UC_ARCH_ARM, UC_MODE_ARM, Uc
+        from gd13my_arm import RM
+        from gd13my_hcd_compat import DMA_RX_DONE, DMA_RX_MORE, install_short_bulk_in
+
+        musb = self.musb
+        musb.set_cable(True, high_speed=True)
+        musb.write(0x11c, 1, 0x21)
+        endpoint = musb.endpoints[1]
+        cpu = Uc(UC_ARCH_ARM, UC_MODE_ARM)
+        cpu.mem_map(DMA_RX_MORE & ~0xfff, 0x1000)
+        cpu.mem_map(0x1000, 0x1000)
+        # .061's transfer-size check and request-more flag.
+        words = (0xe1530002, 0x2a000002, 0xe3510000, 0x13a03001, 0x15893000)
+        cpu.mem_write(DMA_RX_MORE - 4, struct.pack('<5I', *words))
+        install_short_bulk_in(cpu, musb)
+
+        for reported, expected in ((74, 0), (0, 1)):
+            with self.subTest(reported=reported):
+                endpoint.short_dma_count = reported
+                cpu.mem_write(0x1000, bytes(4))
+                for index, value in {1: 74, 2: 512, 3: 74, 5: 1, 9: 0x1000, 10: 10}.items():
+                    cpu.reg_write(RM[index], value)
+                with patch('gd13my_hcd_compat.instruction',
+                           side_effect=lambda _, address: int.from_bytes(cpu.mem_read(address, 4), 'little')):
+                    cpu.emu_start(DMA_RX_MORE - 4, DMA_RX_DONE)
+                self.assertEqual(int.from_bytes(cpu.mem_read(0x1000, 4), 'little'), expected)
+                self.assertEqual(endpoint.short_dma_count, 0)
 
     def test_zero_length_bulk_receive_completes_dma_without_touching_ram(self):
         musb = self.musb

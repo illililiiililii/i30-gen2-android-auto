@@ -43,6 +43,14 @@
 
 인증서 선택과 현재 USB 수신 중단은 각각 재현됐다. 09:55 시험은 Finished에 도달하지 않았다. 중단 전 실폰 실행에서 `AUTH_COMPLETE`와 서비스 응답까지 기록한 구간은 이 문서의 첫 표에 있다. Windows를 통한 전달은 물리 USB 제어 및 바이트 전송만 담당한다. 검증과 AAP 처리는 WinCE에서 실행된다.
 
-가상 MUSB의 짧은 DMA 수신에서 `RXPKTRDY`가 너무 일찍 자동 해제되는 동작도 하드웨어 규격에 맞췄다. 전체 패킷이나 DMA 마지막 워드에 맞닿은 패킷에는 기존 자동 해제를 적용한다. 이어 CPU가 읽는 `RXCOUNT`에 FIFO의 남은 바이트를 반영했다. 자동 해제 판단에는 처음 도착한 패킷 크기를 사용한다. WinCE 전송 완료가 확인되는지 같은 P12로 재시험한다. [MUSBMHDRC Programmer’s Guide](https://linux-sunxi.org/images/7/73/Musbmhdrc.pdf)
+가상 MUSB의 짧은 DMA 수신에서 `RXPKTRDY`가 너무 일찍 자동 해제되는 동작을 바로잡았으며 `RXCOUNT`에 미수신 FIFO 바이트를 반영했다. 전체 패킷과 DMA 마지막 워드에 해당하는 수신에는 자동 해제를 적용한다. [MUSBMHDRC Programmer’s Guide](https://linux-sunxi.org/images/7/73/Musbmhdrc.pdf)
 
 재개한 순정 이미지의 원본 로그는 로컬 `build/aare-integration/verified-alert/live/`의 `android-after-alert.log`, `android-matching-p12.log`, `gd13my-window-20261126-093907-417245.serial.log` 및 같은 이름의 `.usb-host.log`, `.bulk-trace.log`, `.tls-lengths.log`다. 재시동 후의 UART와 WinCE USB 전송 완료 계측은 `gd13my-window-20261126-102059-041030.serial.log` 및 같은 이름의 `.guest-calls.log`에 있다.
+
+## 첫 실폰 영상 확인
+
+14:13 시험에서 같은 P12로 USB를 소프트웨어 재열거했다. 순정 .061 `musbhcd.dll`은 DMA mode 0으로 74바이트를 수신한 뒤 512바이트 요청이 덜 채워졌다는 이유로 다음 IN을 기다렸다. DMA로 처리한 짧은 bulk IN 패킷에서 전송의 완료 분기를 사용하도록 에뮬레이터에서 보정했다. 수신 바이트 수와 펌웨어의 ARM 명령이 일치할 때만 적용한다.
+
+보정 시험에서 WinCE는 74바이트를 받아 TLS 1.2 상호 인증, `AUTH_COMPLETE`, 서비스 탐색, H.264 영상 채널 개설 및 첫 프레임을 기록했다. AARE는 수신기 인증서, 영상 및 입력 채널, 800×480 패널을 확인했다. 에뮬레이터 창에서 실제 화면이 갱신됐다. 앱 목록 터치는 화면 전환으로 이어지지 않았다.
+
+원본은 로컬 `E:/i30-gd13my-images/opencode-resume-perf/live-musb/`의 `android-first-frame.log`, WinCE UART, HCD 및 수신 길이 로그와 `aare-live-800x480.png`에 있다.

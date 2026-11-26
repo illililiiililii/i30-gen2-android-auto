@@ -18,6 +18,7 @@ from unicorn.arm_const import (UC_ARM_REG_CPSR, UC_ARM_REG_LR, UC_ARM_REG_PC, UC
 from gd13my_arm import GuestExceptions, cp15, data_access, exception_entry, hx, instruction, translate, word
 from gd13my_block_clock import NO_DEADLINE, install_block_clock
 from gd13my_display import BASE as DSS_BASE, LcdDisplay
+from gd13my_hcd_compat import install_short_bulk_in
 from gd13my_mmio import MMC_BASES, UART3_BASE, DebugUart, OmapSdMa, ReadOnlyHsMmc, boot_devices
 from gd13my_trace import BootTrace
 from inspect_ce import index_bin, inspect_rom, module_headers
@@ -158,6 +159,8 @@ class KernelRun:
                 self.dma = OmapSdMa(card, MMC_BASES[slot - 1] + 0x120, memory)
             if musb is not None:
                 musb.dma_memory = memory
+                if layout == 'gd13my':
+                    install_short_bulk_in(self.cpu, musb)
             devices = boot_devices(self.uart, empty_mmc=empty_mmc, timer_clock=timer_clock, card=card, slot=slot,
                                    timer_irq=timer_irq, touch=touch, dma=self.dma, musb=musb)
             if timer_irq:

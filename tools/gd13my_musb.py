@@ -29,6 +29,7 @@ class Endpoint:
     output: bytearray = field(default_factory=bytearray)
     input: bytearray = field(default_factory=bytearray)
     fifo_config: bytearray = field(default_factory=lambda: bytearray(6))
+    short_dma_count: int = 0
 
     def read(self, offset, size=2):
         return int.from_bytes(self.regs[offset:offset + size], 'little')
@@ -72,6 +73,7 @@ class HostMusb(ResetBank):
         for endpoint in self.endpoints:
             endpoint.input.clear()
             endpoint.output.clear()
+            endpoint.short_dma_count = 0
             for reg in (2, 6, 8):
                 endpoint.write(reg, 0)
         if not connected:
@@ -211,6 +213,7 @@ class HostMusb(ResetBank):
             address, count = address + len(data), count - len(data)
             if not endpoint.input:
                 received = endpoint.read(8)
+                endpoint.short_dma_count = received if 0 < received < packet_size and len(data) == received else 0
                 if received < packet_size:
                     csr &= ~(RX_AUTO_REQUEST | REQUEST)
                 # DMA unloads words. A short packet outside the final word needs a software ACK.
@@ -280,6 +283,8 @@ class HostMusb(ResetBank):
         flags = endpoint.read(reg)
         if flags & flush:
             (endpoint.output if out else endpoint.input).clear()
+            if not out:
+                endpoint.short_dma_count = 0
             endpoint.write(reg, flags & ~(flush | packet | RX_READY))
             return
         if not flags & packet:
@@ -296,6 +301,7 @@ class HostMusb(ResetBank):
                 result &= ~TX_FIFO_NOT_EMPTY
             else:
                 size = endpoint.read(4) & 0x7ff
+                endpoint.short_dma_count = 0
                 endpoint.input[:] = self.transport.read(address, size)
                 endpoint.write(8, len(endpoint.input))
                 if len(endpoint.input) < size:
