@@ -2,6 +2,24 @@
 
 ## 준비한 시험 이미지 실행
 
+2026-11-27 최신 자동 실행 이미지(USB 연결/부팅 대기 설정을 둘 다 켠 에뮬레이터 전용 복제본)는 다음과 같이 실행한다. 기존 에뮬레이터 창은 그대로 두고 새 실행 이미지를 열 수 있다. 물리 USB 장치를 연결하지 않으면 순정 지도가 계속 표시되고, AARE 인증/미디어 준비 전에는 화면을 가져오지 않는다.
+
+```powershell
+Set-Location F:\i30-gen2-android-auto
+$image = 'build/gd13my-aa-autostart-v8/gd13my-aa-autostart.img'
+.\tools\run_gd13my_phase78.ps1 -UsbPort auto -StockProjectionImage $image `
+    -Seconds 86400 -OutputDirectory 'build/gd13my-aa-autostart-v8/live' `
+    -StatePath 'build/gd13my-aa-autostart-v8/live-user-diska.sqlite3'
+```
+
+`내비 설정 → 기타 → AARE`에서 `USB 연결 시 AARE 자동 실행`과 `부팅 후 AARE 연결 대기`를 각각 저장할 수 있다. USB 자동 옵션은 순정 지도가 이미 떠 있을 때 연결을 감지하고, 부팅 대기 옵션은 지도 부팅 시 guest receiver를 먼저 띄운다. 같은 receiver가 장치를 소유하므로 두 옵션을 함께 켜도 중복 HCD 등록은 하지 않는다. 실폰은 AARE를 실행하고 케이블을 연결해야 한다. Android가 표시하는 USB 앱 선택/접근 권한과 최초 수신기 지문 `Trust`는 휴대폰에서 한 번 승인해야 하며, 이를 에뮬레이터가 대신 누르지 않는다.
+
+새 사용자 상태로 시작하면 순정 내비게이션 동의 화면에서 사용자가 직접 `동의`를 눌러야 지도에 진입한다. 라이브 실행은 이 동의 버튼을 자동으로 누르지 않는다.
+
+헤드리스 가상폰 시험은 `build/gd13my-aa-autostart-v8/native-auto-replug/`에 저장한다. 순정 지도 ACK 뒤 자동 투사 시작, 가상 USB/AOA, TLS 1.2 인증, AAP 서비스 탐색 및 첫 프레임 표시까지 확인했다. 분리/재연결의 출력 픽셀 검증과 실제 스마트폰 앱/USB 권한 대화상자는 미검증이다.
+
+## 이전 준비 이미지 실행
+
 현재 PC에서는 다음 명령으로 순정 WinCE 창을 연다. 실행 중인 동일 이미지의 에뮬레이터 창이 있다면 그 창을 사용한다.
 
 ```powershell

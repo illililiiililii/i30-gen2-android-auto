@@ -33,7 +33,8 @@ SETTINGS_API = ('GetFileAttributesW', 'RegCreateKeyExW', 'RegSetValueExW', 'RegC
                 'WaitForMultipleObjects', 'OutputDebugStringW', 'ExitThread', 'CreateFileW', 'ReadFile', 'DeleteFileW',
                 'GetModuleHandleW', 'GetDlgItem', 'SendMessageW', 'SetWindowPos', 'EndDialog',
                 'DialogBoxIndirectParamW', 'GetCommandLineW', 'SetDlgItemTextW', 'UpdateWindow', 'SetSystemTime',
-                'GetForegroundWindow', 'GetWindowLongW', 'SetWindowLongW', 'SetTimer', 'CreateThread', 'GetTickCount')
+                'GetForegroundWindow', 'FindWindowW', 'PostMessageW', 'GetWindowLongW', 'SetWindowLongW',
+                'SetTimer', 'CreateThread', 'GetTickCount', 'Sleep')
 NATIVE_API = (*SESSION_API, 'GetProcessHeap', 'HeapAlloc', 'HeapFree', 'CreateThread',
               'GetWindow', 'GetParent', 'IsWindow', 'IsWindowVisible', 'GetWindowLongW', 'SetWindowLongW',
               'GetClientRect', 'ClientToScreen', 'ScreenToClient', 'WindowFromPoint', 'GetWindowThreadProcessId', 'SetWindowPos',
@@ -41,7 +42,7 @@ NATIVE_API = (*SESSION_API, 'GetProcessHeap', 'HeapAlloc', 'HeapFree', 'CreateTh
               'DestroyWindow', 'FindWindowW', 'SendMessageW', 'SetTimer', 'KillTimer',
               'InterlockedIncrement', 'InterlockedDecrement', 'InterlockedExchange', 'InterlockedCompareExchange',
               'InvalidateRect', 'ValidateRect', 'GetDCEx', 'ReleaseDC', 'CreateFontIndirectW', 'SelectObject',
-              'DeleteObject', 'FillRect', 'DrawTextW', 'SetBkMode', 'SetTextColor')
+              'DeleteObject', 'FillRect', 'DrawTextW', 'SetBkMode', 'SetTextColor', 'DeleteFileW', 'GetTickCount')
 DRIVER = 'i30usb.dll'
 NAVIGATION_MODULE = 'i30nav.dll'
 
@@ -187,7 +188,7 @@ def build(compiler, output, bearssl_source=None, h264_source=None, virtual_lcd_b
             sections, entry, directory_rva, iat = native_sections(elf)
             if is_dll:
                 names = ('USBDeviceAttach',) if target == DRIVER else (
-                    'I30RouteProjectionTouch', 'I30StockDisplayChanged', 'I30ToggleProjection')
+                    'I30AutoStartProjection', 'I30RouteProjectionTouch', 'I30StockDisplayChanged', 'I30ToggleProjection')
                 sections = dll_sections(elf, sections, target, names)
             image = pe_image(sections, entry, directory_rva, iat, api=api, dll=is_dll)
             exe = work / target

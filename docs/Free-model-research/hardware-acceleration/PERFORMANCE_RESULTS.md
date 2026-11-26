@@ -34,3 +34,11 @@ python tools/bench_gd13my_gl.py --frames 10 --warmup 2 --output build/hardware-a
 다른 반복 측정에서 `LcdDisplay.capture()` 입력이 이미 detached `bytearray`임을 확인하고 매 LCD poll마다 `bytes()`로 중복 복사하던 그래픽 plane과 video backdrop 변환을 제거했다. 기존 bitmap/LCD 결과 형식과 게스트 RAM snapshot 소유권은 바뀌지 않는다. 동등한 화면 결과 및 회귀는 확인했으나, 실지도 전체 런 median에서 독립된 유의 성능 이득은 입증되지 않았다. 초당 LCD poll 성능 및 캡처 구간 지표는 [GPU/readback 기록](GPU_READBACK_OPTIMIZATION.md)을 참조한다.
 
 기존 실제 map GPU/GDI 결과는 WGL GPU가 0.2495s/5 copy 대 GDI 0.0298s/5 copy로 약 8.4배 오래 걸렸고, CPU/working set도 증가했다. 실제 scene에선 GPU를 기본값으로 올리지 않았다.
+
+## AARE 자동 시작 변경 (2026-11-27 KST)
+
+이번 변경은 지도/영상의 실행 경로와 자동 전환을 연결한 기능 변경이다. USB 자동 실행은 AOA 버전 응답 후 임시 USB 등록을 정리하고 지도 프로세스의 표준 입력 훅을 깨워 native receiver를 시작한다. 부팅 대기 helper는 500ms마다 제한적으로 WM_MOUSEMOVE를 게시하며 지도 창이 준비되면 종료한다. 자동 시작 함수는 같은 NAVI 프로세스의 표시된 800×480 map window를 탐색한다. 투사 창은 첫 영상이 준비될 때까지 숨겨 두고, 정상 frame 출력 후 화면을 전환한다. v8 가상폰 실행에서 지도 ACK, 자동 receiver, TLS 1.2, 서비스 탐색 및 `i30 CE projection frame presented.`를 확인했다. 분리/재연결의 색상 출력 감지는 검증을 완료하지 못했다. 이 변경의 FPS 또는 실제 스마트폰 지연 개선은 측정되지 않았다.
+
+설정 메뉴는 `USB 연결 시 AARE 자동 실행`과 `부팅 후 AARE 연결 대기`를 독립된 `i30auto.opt`/`i30boot.opt` 파일로 저장한다. 둘 다 켜지면 uComH의 USB 서비스와 지도 프로세스의 USB receiver가 중복 등록되지 않도록 uComH 시작을 건너뛴다. 정상 `i30usb.dll`/TLS/h264bsd 경로와 수동 투사 메뉴는 유지된다. 이 기능을 GPU/DSP 가속이나 실기 성능 향상으로 해석하지 않는다.
+
+자동 시작 이미지와 헤드리스 시험은 `build/gd13my-aa-autostart-v8/`에 생성한다. AARE TLS 신원은 실폰용 이미지에만 보관하고 가상폰 시험은 일회성 임시 인증서를 사용한다. 순정 실기, USB 권한 대화상자, 실제 Android AARE 화면 전환, 분리/재연결 및 장시간 지도 안정성은 실폰/실기 측정이 필요하다. 기존 map 실측 값(+0.9% median, 표본 변동 큼)은 이번 변경에서도 개선으로 재분류하지 않는다.

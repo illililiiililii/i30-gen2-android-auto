@@ -13,6 +13,43 @@
 _start:
     ldr     r3, [sb, #4]              @ Displaced load of MSG.message
 #ifdef I30_NATIVE_PROJECTION
+    cmp     r3, #0x0f                @ WM_PAINT / WM_TIMER wakes boot-auto on the visible map.
+    beq     auto_start
+    ldr     r1, =0x200               @ The bounded startup helper uses the normal input dispatch path.
+    cmp     r3, r1
+    beq     auto_start
+    ldr     r1, =0x113
+    cmp     r3, r1
+    bne     route_touch
+auto_start:
+    push    {r0-r3, r5, lr}
+    mov     r5, sp
+    bic     sp, sp, #7
+    adrl    r0, native_module
+    bl      stock_get_module
+    cmp     r0, #0
+    bne     resolve_auto
+    adrl    r0, native_path
+    bl      stock_load_library
+    cmp     r0, #0
+    beq     auto_done
+resolve_auto:
+    adrl    r1, native_auto_entry
+    adrl    ip, get_proc_delta
+    ldr     r2, [ip]
+    ldr     ip, [ip, r2]
+    mov     lr, pc
+    bx      ip
+    cmp     r0, #0
+    beq     auto_done
+    mov     ip, r0
+    ldr     r0, [sb]
+    mov     lr, pc
+    bx      ip
+auto_done:
+    mov     sp, r5
+    pop     {r0-r3, r5, lr}
+route_touch:
     sub     ip, r3, #512
     cmp     ip, #2                   @ WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP
     bhi     resume
@@ -206,6 +243,8 @@ native_path:
     .string16 "\\DiskA\\Application\\NAVI\\i30nav.dll"
 native_entry:
     .string16 "I30ToggleProjection"
+native_auto_entry:
+    .string16 "I30AutoStartProjection"
 native_touch_entry:
     .string16 "I30RouteProjectionTouch"
 projection_class:

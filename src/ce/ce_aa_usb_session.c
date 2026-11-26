@@ -148,6 +148,8 @@ static const CE_WCHAR *listen(enum I30UsbListenMode mode, CE_HANDLE cancel,
                         }
                         OutputDebugStringW(message);
                         OutputDebugStringW(L"\r\n");
+                        if (automatic && result == 0U)
+                            break; /* Hand off only after the listener has released its temporary USB driver. */
                     }
                 } else if (result != WIN_WAIT_TIMEOUT) {
                     message = L"The USB connection test could not wait for the phone.";

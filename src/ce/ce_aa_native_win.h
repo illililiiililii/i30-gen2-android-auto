@@ -7,7 +7,7 @@ typedef struct CePoint { int32_t x, y; } CePoint;
 typedef struct CeRect { int32_t left, top, right, bottom; } CeRect;
 
 enum {
-    CE_GW_NEXT = 2, CE_GW_PREV = 3, CE_GW_OWNER = 4,
+    CE_GW_HWNDFIRST = 0, CE_GW_NEXT = 2, CE_GW_PREV = 3, CE_GW_OWNER = 4, CE_GW_CHILD = 5,
     CE_GWL_STYLE = -16, CE_GWL_EXSTYLE = -20, CE_GWL_USERDATA = -21,
     CE_WS_TOPMOST = 8, CE_WAIT_OBJECT_0 = 0, CE_ERROR_ALREADY_EXISTS = 183
 };

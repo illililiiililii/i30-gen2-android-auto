@@ -10,11 +10,13 @@ int DeleteFileW(const CE_WCHAR *);
 CE_HANDLE GetModuleHandleW(const CE_WCHAR *);
 CE_HANDLE GetDlgItem(CE_HANDLE, int);
 int32_t SendMessageW(CE_HANDLE, uint32_t, uint32_t, int32_t);
+int PostMessageW(CE_HANDLE, uint32_t, uint32_t, int32_t);
 int SetWindowPos(CE_HANDLE, CE_HANDLE, int, int, int, int, uint32_t);
 int EndDialog(CE_HANDLE, int);
 int SetDlgItemTextW(CE_HANDLE, int, const CE_WCHAR *);
 int UpdateWindow(CE_HANDLE);
 CE_HANDLE GetForegroundWindow(void);
+CE_HANDLE FindWindowW(const CE_WCHAR *, const CE_WCHAR *);
 int32_t GetWindowLongW(CE_HANDLE, int);
 int32_t SetWindowLongW(CE_HANDLE, int, int32_t);
 uintptr_t SetTimer(CE_HANDLE, uintptr_t, unsigned, void *);
@@ -25,12 +27,16 @@ int DialogBoxIndirectParamW(CE_HANDLE, const void *, CE_HANDLE, DialogProc, int3
 
 enum { WIN_WAIT_TIMEOUT = 258 };
 static const CE_WCHAR autostart[] = WIDE_STRING(I30_USB_STARTUP_PREF);
+static const CE_WCHAR boot_auto[] = WIDE_STRING(I30_BOOT_AUTO_PREF);
+static const CE_WCHAR boot_wake_gate[] = L"I30.GD13MY.BootWake.1";
+static const CE_WCHAR projection_class[] = L"I30.GD13MY.NavigationProjection.1";
 
 /* Standard CE dialog template. */
-enum { USB_TEST = 1002, AUTO_CHECK = 1003, STATUS = 1004, SAVE = 1, CANCEL = 2 };
+enum { USB_TEST = 1002, AUTO_CHECK = 1003, BOOT_CHECK = 1005, STATUS = 1004, SAVE = 1, CANCEL = 2 };
 #define SETTINGS_TITLE L"AARE 설정"
-#define STARTUP_LABEL L"부팅 후 AARE USB 감지"
-#define STATUS_LABEL L"처음 한 번 휴대폰에서 USB 접근과 수신기 인증서를 승인하세요."
+#define STARTUP_LABEL L"USB 연결 시 AARE 자동 실행"
+#define BOOT_LABEL L"부팅 후 AARE 연결 대기"
+#define STATUS_LABEL L"처음 연결 시 휴대폰 USB 접근과 수신기 인증서를 승인하세요."
 #define CONTROL_TEMPLATE(caption) struct __attribute__((packed, aligned(4))) { \
     uint32_t style, extended; uint16_t x, y, w, h, id, kind, class_id; \
     CE_WCHAR label[sizeof(caption) / sizeof(CE_WCHAR)]; uint16_t extra; \
@@ -40,17 +46,19 @@ static const struct __attribute__((packed, aligned(4))) {
     uint16_t count, x, y, w, h, menu, class_id;
     CE_WCHAR text[sizeof(SETTINGS_TITLE) / sizeof(CE_WCHAR)];
     CONTROL_TEMPLATE(STARTUP_LABEL) auto_checkbox __attribute__((aligned(4)));
+    CONTROL_TEMPLATE(BOOT_LABEL) boot_checkbox __attribute__((aligned(4)));
     CONTROL_TEMPLATE(STATUS_LABEL) status;
     CONTROL_TEMPLATE(L"저장") save;
     CONTROL_TEMPLATE(L"닫기") cancel;
     CONTROL_TEMPLATE(L"USB 연결 시험") usb;
 } settings = {
-    0x80c80080, 0, 5, 0, 0, 212, 97, 0, 0, SETTINGS_TITLE,
-    {0x50010003, 0, 12, 13, 189, 16, AUTO_CHECK, 0xffff, 0x80, STARTUP_LABEL, 0},
-    {0x50000000, 0, 12, 35, 188, 33, STATUS, 0xffff, 0x82, STATUS_LABEL, 0},
-    {0x50010001, 0, 12, 71, 42, 17, SAVE, 0xffff, 0x80, L"저장", 0},
-    {0x50010000, 0, 60, 71, 42, 17, CANCEL, 0xffff, 0x80, L"닫기", 0},
-    {0x50010000, 0, 115, 71, 85, 17, USB_TEST, 0xffff, 0x80, L"USB 연결 시험", 0},
+    0x80c80080, 0, 6, 0, 0, 212, 108, 0, 0, SETTINGS_TITLE,
+    {0x50010003, 0, 12, 12, 189, 16, AUTO_CHECK, 0xffff, 0x80, STARTUP_LABEL, 0},
+    {0x50010003, 0, 12, 31, 189, 16, BOOT_CHECK, 0xffff, 0x80, BOOT_LABEL, 0},
+    {0x50000000, 0, 12, 51, 188, 25, STATUS, 0xffff, 0x82, STATUS_LABEL, 0},
+    {0x50010001, 0, 12, 80, 42, 17, SAVE, 0xffff, 0x80, L"저장", 0},
+    {0x50010000, 0, 60, 80, 42, 17, CANCEL, 0xffff, 0x80, L"닫기", 0},
+    {0x50010000, 0, 115, 80, 85, 17, USB_TEST, 0xffff, 0x80, L"USB 연결 시험", 0},
 };
 #undef CONTROL_TEMPLATE
 #undef SETTINGS_TITLE
@@ -71,21 +79,46 @@ static int save_preference(const CE_WCHAR *path, int value)
 
 static int save_settings(CE_HANDLE window)
 {
-    int boot = SendMessageW(GetDlgItem(window, AUTO_CHECK), 0xf0, 0, 0) == 1;
-    if (boot != i30_usb_file_exists(autostart) && !save_preference(autostart, boot))
+    int usb_auto = SendMessageW(GetDlgItem(window, AUTO_CHECK), 0xf0, 0, 0) == 1;
+    int boot_auto_enabled = SendMessageW(GetDlgItem(window, BOOT_CHECK), 0xf0, 0, 0) == 1;
+    if (usb_auto != i30_usb_file_exists(autostart) && !save_preference(autostart, usb_auto))
         return 0;
-    OutputDebugStringW(boot ? L"i30 USB startup setting saved: on.\r\n" :
-                             L"i30 USB startup setting saved: off.\r\n");
+    if (boot_auto_enabled != i30_usb_file_exists(boot_auto) && !save_preference(boot_auto, boot_auto_enabled))
+        return 0;
+    OutputDebugStringW(L"i30 AARE auto-run settings saved.\r\n");
     return 1;
 }
 
 static const CE_WCHAR *test_usb(int automatic)
 {
+    if (automatic)
+        DeleteFileW(WIDE_STRING(I30_USB_AUTO_PENDING_PREF));
     const CE_WCHAR *result = i30_usb_file_exists(I30_AA_DRIVER_PATH) ?
         i30_usb_listen(automatic ? I30_USB_AUTOSTART : I30_USB_TEST, 0) : L"The USB client DLL is missing.";
+    if (automatic && result && result[0] == L'P') {
+        /* The automatic listener exits and releases its USB gate before publishing this handoff. */
+        static const CE_WCHAR ready[] = L"Phone answered the Android Auto version request.\r\nProjection setup is pending.";
+        unsigned i = 0;
+        while (ready[i] && result[i] == ready[i]) ++i;
+        if (!ready[i] && !result[i])
+            save_preference(WIDE_STRING(I30_USB_AUTO_PENDING_PREF), 1);
+    }
     OutputDebugStringW(result);
     OutputDebugStringW(L"\r\n");
     return result;
+}
+
+static void wake_projection(void)
+{
+    for (unsigned elapsed = 0; elapsed < 600000U; elapsed += 500U) {
+        if (FindWindowW(projection_class, 0) ||
+            (!i30_usb_file_exists(autostart) && !i30_usb_file_exists(boot_auto)))
+            return;
+        CE_HANDLE foreground = GetForegroundWindow();
+        if (foreground)
+            PostMessageW(foreground, 0x0200U, 0, (479 << 16) | 790);
+        Sleep(500U);
+    }
 }
 
 typedef struct ProjectionDialog {
@@ -160,6 +193,7 @@ static int settings_dialog(CE_HANDLE window, uint32_t msg, uint32_t command, int
     (void)unused;
     if (msg == 0x110) { /* WM_INITDIALOG */
         SendMessageW(GetDlgItem(window, AUTO_CHECK), 0xf1, i30_usb_file_exists(autostart), 0);
+        SendMessageW(GetDlgItem(window, BOOT_CHECK), 0xf1, i30_usb_file_exists(boot_auto), 0);
         SetWindowPos(window, 0, 194, 116, 0, 0, 0x15);
         return 1;
     }
@@ -259,6 +293,7 @@ void i30_ce_entry(void)
     static const CE_WCHAR start[] = WIDE_STRING(I30_STARTUP_COMMAND);
     static const CE_WCHAR launch[] = WIDE_STRING(I30_MANUAL_COMMAND);
     static const CE_WCHAR clock[] = WIDE_STRING(I30_EMULATOR_CLOCK_COMMAND);
+    static const CE_WCHAR wake[] = L"-i30wake";
     CE_HANDLE owner = projection_owner();
     if (has_command(clock, sizeof(clock) / sizeof(*clock) - 1)) {
         sync_emulator_clock();
@@ -266,7 +301,15 @@ void i30_ce_entry(void)
         if (i30_usb_file_exists(autostart)) {
             OutputDebugStringW(L"i30 USB startup requested.\r\n");
             test_usb(1);
+            if (i30_usb_file_exists(WIDE_STRING(I30_USB_AUTO_PENDING_PREF)))
+                wake_projection();
         }
+    } else if (has_command(wake, sizeof(wake) / sizeof(*wake) - 1)) {
+        CE_HANDLE gate = CreateEventW(0, 1, 0, boot_wake_gate);
+        if (gate && GetLastError() != 183U)
+            wake_projection();
+        if (gate)
+            CloseHandle(gate);
     } else if (owner || has_command(launch, sizeof(launch) / sizeof(*launch) - 1)) {
         OutputDebugStringW(L"i30 Android Auto requested from stock navigation menu.\r\n");
         if (owner && i30_usb_file_exists(I30_AA_DRIVER_PATH) &&

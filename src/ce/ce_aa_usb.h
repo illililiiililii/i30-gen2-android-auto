@@ -16,6 +16,7 @@
 #define I30_AA_MEDIA L"I30AA.GD13MY.061.USB.Media"
 #define I30_AA_MEDIA_FAILED L"I30AA.GD13MY.061.USB.MediaFailed"
 #define I30_AA_VIDEO_ACTIVE L"I30AA.GD13MY.061.USB.VideoActive"
+#define I30_AA_RENDER_PENDING L"I30AA.GD13MY.061.USB.RenderPending"
 #define I30_AA_AARE_MODE L"\\DiskA\\Application\\NAVI\\i30-aare.opt"
 
 #define I30_SAMSUNG 0x04e8U

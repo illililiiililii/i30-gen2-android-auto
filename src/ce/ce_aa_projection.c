@@ -1,4 +1,6 @@
 #include "ce_aa_projection.h"
+#include "ce_aa_usb.h"
+
 #include "ce_aa_video.h"
 #include "ce_aa_native_win.h"
 
@@ -10,6 +12,16 @@ int ReleaseDC(CE_HANDLE, CE_HANDLE);
 void *LocalAlloc(uint32_t, uint32_t);
 void *LocalFree(void *);
 int32_t SendMessageTimeout(CE_HANDLE, unsigned, uint32_t, int32_t, unsigned, unsigned, uint32_t *);
+
+static CE_HANDLE render_pending = (CE_HANDLE)-1;
+
+static int automatic_render_pending(void)
+{
+    if (render_pending == (CE_HANDLE)-1)
+        render_pending = CreateEventW(0, 1, 0, I30_AA_RENDER_PENDING);
+    return render_pending && render_pending != (CE_HANDLE)-1 &&
+           WaitForSingleObject(render_pending, 0) == 0U;
+}
 
 enum { VIDEO_CHANNEL = I30_PROJECTION_VIDEO_CHANNEL, CONTROL = 4, H264_BASELINE = 3 };
 enum { OPEN = 7, CLOSE = 9, PING = 11, GOODBYE = 15, AUDIO_FOCUS_REQUEST = 18 };
@@ -54,7 +66,7 @@ CE_HANDLE i30_projection_surface(void)
     CE_HANDLE window = FindWindowW(I30_NAVIGATION_PROJECTION_CLASS, 0);
     if (window) {
         CeRect rect;
-        return IsWindowVisible(window) && i30_stock_display_safe() &&
+        return (IsWindowVisible(window) || automatic_render_pending()) && i30_stock_display_safe() &&
                i30_projection_above_map(window, GetWindow(window, CE_GW_OWNER)) &&
                GetClientRect(window, &rect) && rect.right - rect.left == I30_VIDEO_WIDTH &&
                rect.bottom - rect.top == I30_VIDEO_HEIGHT ? window : 0;
@@ -160,6 +172,7 @@ static CE_HANDLE begin_paint(void *window)
     (void)window;
     return GetDC(0);
 #else
+    int pending = !IsWindowVisible(window) && automatic_render_pending();
     if (i30_projection_surface() != window)
         return 0;
     if (window != FindWindowW(I30_NAVIGATION_PROJECTION_CLASS, 0))
@@ -167,7 +180,7 @@ static CE_HANDLE begin_paint(void *window)
     enum { DCX_CACHE = 2, DCX_CLIPSIBLINGS = 0x10, NULLREGION = 1 };
     CE_HANDLE dc = GetDCEx(window, 0, DCX_CACHE | DCX_CLIPSIBLINGS);
     CeRect visible;
-    if (dc && (GetClipBox(dc, &visible) <= NULLREGION || !i30_stock_display_safe())) {
+    if (dc && ((!pending && GetClipBox(dc, &visible) <= NULLREGION) || !i30_stock_display_safe())) {
         ReleaseDC(window, dc);
         return 0;
     }

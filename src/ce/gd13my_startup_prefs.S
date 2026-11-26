@@ -19,7 +19,19 @@ startup_prefs:
     adrl r0, auto_path
     bl selected
     cmp r0, #0
+    bne usb_enabled
+    adrl r0, boot_auto_path
+    bl selected
+    cmp r0, #0
     beq finish
+    b boot_wake
+usb_enabled:
+    /* The navigation process owns the native receiver and wakes its touch
+       dispatcher. Avoid starting a second USB HCD owner. */
+    adrl r0, boot_auto_path
+    bl selected
+    cmp r0, #0
+    bne boot_wake
 
     mov r0, #0
     mov r1, #1
@@ -39,6 +51,10 @@ first_time:
     @ Keep the first event handle for the lifetime of the system manager.
     @ The event serializes subsequent NAVI-ready notifications this boot.
     adrl r0, startup_args
+    bl spawn_settings
+    b finish
+boot_wake:
+    adrl r0, wake_args
     bl spawn_settings
 finish:
     pop {r0-r3, r5-r7, lr}
@@ -108,11 +124,16 @@ not_selected:
 startup_args:
     .string16 I30_STARTUP_COMMAND
     .balign 4
+wake_args:
+    .string16 "-i30wake"
+    .balign 4
 clock_args:
     .string16 I30_EMULATOR_CLOCK_COMMAND
     .balign 4
 auto_path:
     .string16 I30_USB_STARTUP_PREF
+boot_auto_path:
+    .string16 I30_BOOT_AUTO_PREF
 emulator_clock_path:
     .string16 I30_EMULATOR_UTC_FILE
 gate_name:

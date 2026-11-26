@@ -38,12 +38,17 @@ def read_ce_app(path, *, dll=False):
 
 
 def package(base, probe, output, *, settings=None, navigation_patch=None, usb_client=None, startup_patch=None,
-            native_projection=None, stock_display=None, compact=False, emulator_utc=False, aare_identity=None):
+            native_projection=None, stock_display=None, compact=False, emulator_utc=False, aare_identity=None,
+            usb_auto=False, boot_auto=False):
     from pyfatfs.PyFatFS import PyFatFS
 
     if output.exists():
         raise FileExistsError(output)
     apps = {PROBE_PATH: read_ce_app(probe)} if probe is not None else {}
+    if usb_auto:
+        apps['/i30auto.opt'] = b'1\n'
+    if boot_auto:
+        apps['/i30boot.opt'] = b'1\n'
     replacements = {}
     if navigation_patch is not None and settings is None:
         raise ValueError('The navigation settings patch requires the CE settings app')
@@ -189,6 +194,8 @@ def package(base, probe, output, *, settings=None, navigation_patch=None, usb_cl
         report['startup_sha256'] = sha256(replacements[STARTUP_PATH]).hexdigest()
     if aare_identity is not None:
         report['tls_profile'] = 'aare'
+    if usb_auto or boot_auto:
+        report['aare_auto_run'] = {'usb_connect': bool(usb_auto), 'boot_wait': bool(boot_auto)}
     if utc_offset is not None:
         report['emulator_utc_offset'] = utc_offset
     return report
@@ -208,13 +215,16 @@ def main():
     parser.add_argument('--compact', action='store_true', help='Copy and audit only DiskA for --app-volume')
     parser.add_argument('--emulator-utc', action='store_true', help='Reserve a read-only host UTC mailbox on DiskA')
     parser.add_argument('--aare-identity', type=Path, help='Provision an enrolled AARE identity in the emulator image')
+    parser.add_argument('--enable-usb-auto', action='store_true', help='Enable USB-attach auto projection in this virtual image')
+    parser.add_argument('--enable-boot-auto', action='store_true', help='Start the guest-native receiver after navigation boot')
     args = parser.parse_args()
     if args.probe is None and args.settings is None:
         parser.error('Supply a CE probe or --settings application')
     report = package(args.base, args.probe, args.output, settings=args.settings,
                      navigation_patch=args.navigation_patch, usb_client=args.usb_client,
                      startup_patch=args.startup_patch, native_projection=args.native_projection, stock_display=args.stock_display,
-                     compact=args.compact, emulator_utc=args.emulator_utc, aare_identity=args.aare_identity)
+                     compact=args.compact, emulator_utc=args.emulator_utc, aare_identity=args.aare_identity,
+                     usb_auto=args.enable_usb_auto, boot_auto=args.enable_boot_auto)
     print(json.dumps(report, indent=2))
 
 

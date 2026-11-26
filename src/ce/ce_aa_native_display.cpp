@@ -5,6 +5,7 @@ extern "C" {
 #include "ce_aa_video.h"
 }
 #include "ce_aa_usb_session.h"
+#include "ce_startup_pref.h"
 
 namespace {
 
@@ -51,6 +52,8 @@ int SetBkMode(CE_HANDLE, int);
 uint32_t SetTextColor(CE_HANDLE, uint32_t);
 int ScreenToClient(CE_HANDLE, CePoint *);
 CE_HANDLE WindowFromPoint(CePoint);
+int DeleteFileW(const CE_WCHAR *);
+uint32_t GetTickCount(void);
 }
 
 constexpr uint32_t ws_child = 0x40000000, ws_popup = 0x80000000;
@@ -110,10 +113,10 @@ constexpr uint32_t release_qr[] = {
 };
 
 struct Projection {
-    CE_HANDLE map, cancel, worker, video, heading, body;
+    CE_HANDLE map, cancel, worker, video, render_pending, heading, body;
     volatile int32_t references, status;
     int32_t displayed, painted;
-    bool closing, aare;
+    bool closing, aare, automatic;
     Button pressed;
     unsigned guide_page;
     bool touch_enabled, touch_pressed, touch_reset;
@@ -123,6 +126,7 @@ struct Projection {
 };
 
 CE_HANDLE module = reinterpret_cast<CE_HANDLE>(-1);
+int32_t automatic_create = -1;
 
 Projection *state_for(CE_HANDLE window)
 {
@@ -134,6 +138,8 @@ void release(Projection *state)
     if (InterlockedDecrement(&state->references) == 0) {
         if (state->video)
             CloseHandle(state->video);
+        if (state->render_pending)
+            CloseHandle(state->render_pending);
         if (state->heading)
             DeleteObject(state->heading);
         if (state->body)
@@ -147,6 +153,10 @@ void report_status(void *argument, I30UsbProjectionStatus status)
 {
     auto *state = static_cast<Projection *>(argument);
     InterlockedExchange(&state->status, status);
+    if (state->automatic && state->render_pending) {
+        bool active = state->video && WaitForSingleObject(state->video, 0) == CE_WAIT_OBJECT_0;
+        EventModify(state->render_pending, status == I30_USB_MEDIA && !active ? 3U : 2U);
+    }
 }
 
 uint32_t run_usb(void *argument)
@@ -384,6 +394,43 @@ bool panel_origin(CE_HANDLE map, CePoint &origin)
            ClientToScreen(map, &origin);
 }
 
+bool map_candidate(CE_HANDLE window, uint32_t process, CE_HANDLE projection)
+{
+    if (!window || window == projection || !IsWindowVisible(window) ||
+        (GetWindowLongW(window, CE_GWL_EXSTYLE) & CE_WS_TOPMOST))
+        return false;
+    uint32_t owner = 0;
+    if (!GetWindowThreadProcessId(window, &owner) || owner != process)
+        return false;
+    CePoint origin;
+    return panel_origin(window, origin);
+}
+
+CE_HANDLE find_map_window(CE_HANDLE context)
+{
+    uint32_t process = 0;
+    if (!context || !GetWindowThreadProcessId(context, &process) || !process)
+        return nullptr;
+    CE_HANDLE root = context;
+    while ((GetWindowLongW(root, CE_GWL_STYLE) & ws_child) && GetParent(root))
+        root = GetParent(root);
+    CePoint origin;
+    if (panel_origin(root, origin))
+        return root;
+
+    CE_HANDLE projection = FindWindowW(I30_NAVIGATION_PROJECTION_CLASS, nullptr);
+    CE_HANDLE top = GetWindow(root, CE_GW_HWNDFIRST);
+    for (unsigned i = 0; top && i < 64; ++i, top = GetWindow(top, CE_GW_NEXT)) {
+        if (map_candidate(top, process, projection))
+            return top;
+        CE_HANDLE child = GetWindow(top, CE_GW_CHILD);
+        for (unsigned j = 0; child && j < 64; ++j, child = GetWindow(child, CE_GW_NEXT))
+            if (map_candidate(child, process, projection))
+                return child;
+    }
+    return nullptr;
+}
+
 bool place(CE_HANDLE window, CE_HANDLE map)
 {
     CePoint origin, current{0, 0};
@@ -435,8 +482,19 @@ void refresh(CE_HANDLE window, Projection *state)
         hide(window);
         return;
     }
+    int32_t status = InterlockedCompareExchange(&state->status, 0, 0);
+    /* Keep the OEM map visible until a complete decoded frame is presented. */
+    const bool media_ready = status == I30_USB_MEDIA && video_active(state);
+    if (state->automatic && state->render_pending)
+        EventModify(state->render_pending, media_ready ? 2U :
+                    status == I30_USB_MEDIA ? 3U : 2U);
+    if (state->automatic && !media_ready) {
+        state->pressed = Button::None;
+        reset_touch(state);
+        hide(window);
+    }
     const bool showing = !IsWindowVisible(window);
-    if (showing &&
+    if (showing && (!state->automatic || media_ready) &&
         (!SetWindowPos(window, nullptr, 0, 0, 0, 0, visibility_flags | swp_show) ||
          !i30_projection_above_map(window, state->map))) {
         hide(window);
@@ -452,7 +510,6 @@ void refresh(CE_HANDLE window, Projection *state)
             OutputDebugStringW(L"i30 native projection placed immediately above the stock map.\r\n");
         }
     }
-    int32_t status = InterlockedCompareExchange(&state->status, 0, 0);
     if (video_active(state)) {
         state->guide_page = 0;
         state->pressed = Button::None;
@@ -581,12 +638,11 @@ extern "C" int i30_ce_entry(CE_HANDLE instance, uint32_t reason, void *)
 
 extern "C" int I30ToggleProjection(CE_HANDLE menu)
 {
-    CE_HANDLE map = menu;
-    while (map && (GetWindowLongW(map, CE_GWL_STYLE) & ws_child))
-        map = GetParent(map);
+    CE_HANDLE map = find_map_window(menu);
     CePoint origin;
     if (!panel_origin(map, origin)) {
-        OutputDebugStringW(L"i30 native projection found no visible 800x480 stock map owner.\r\n");
+        if (automatic_create != 1)
+            OutputDebugStringW(L"i30 native projection found no visible 800x480 stock map owner.\r\n");
         return 0;
     }
     if (!i30_usb_file_exists(I30_AA_DRIVER_PATH)) {
@@ -597,6 +653,12 @@ extern "C" int I30ToggleProjection(CE_HANDLE menu)
         Projection *state = state_for(existing);
         if (!state || state->map != map)
             return 0;
+        if (state->automatic) {
+            state->automatic = false;
+            state->guide_page = 0;
+            refresh(existing, state);
+            return 1;
+        }
         close_projection(existing, state);
         return 1;
     }
@@ -611,6 +673,7 @@ extern "C" int I30ToggleProjection(CE_HANDLE menu)
         return 0;
     *state = {};
     state->map = map;
+    state->automatic = automatic_create == 1;
     state->aare = i30_usb_file_exists(I30_AA_AARE_MODE);
     state->cancel = CreateEventW(nullptr, 1, 0, nullptr);
     state->references = 1;
@@ -622,6 +685,11 @@ extern "C" int I30ToggleProjection(CE_HANDLE menu)
     }
     state->video = CreateEventW(nullptr, 1, 0, I30_AA_VIDEO_ACTIVE);
     if (!state->video) {
+        release(state);
+        return 0;
+    }
+    state->render_pending = CreateEventW(nullptr, 1, 0, I30_AA_RENDER_PENDING);
+    if (!state->render_pending) {
         release(state);
         return 0;
     }
@@ -658,6 +726,44 @@ extern "C" int I30ToggleProjection(CE_HANDLE menu)
     if (!i30_stock_display_safe())
         OutputDebugStringW(L"i30 native projection waiting for stock display permission.\r\n");
     refresh(window, state);
+    return 1;
+}
+
+extern "C" int I30AutoStartProjection(CE_HANDLE menu)
+{
+    static const CE_WCHAR boot_auto[] = L"\\DiskA\\i30boot.opt";
+    static const CE_WCHAR pending[] = L"\\DiskA\\i30-aa-usb-pending.opt";
+    static uint32_t last_check = 0xffffffffU;
+    uint32_t now = GetTickCount();
+    if (now - last_check < 1000U)
+        return 0;
+    last_check = now;
+    if (!i30_usb_file_exists(boot_auto) && !i30_usb_file_exists(pending))
+        return 0;
+    CE_HANDLE map = find_map_window(menu);
+    if (!map)
+        return 0;
+    if (CE_HANDLE existing = FindWindowW(I30_NAVIGATION_PROJECTION_CLASS, nullptr)) {
+        Projection *state = state_for(existing);
+        return state && state->map == map;
+    }
+    automatic_create = 1;
+    int started = I30ToggleProjection(menu);
+    automatic_create = -1;
+    if (!started)
+        return 0;
+    CE_HANDLE window = FindWindowW(I30_NAVIGATION_PROJECTION_CLASS, nullptr);
+    Projection *state = window ? state_for(window) : nullptr;
+    if (!state || state->map != map) {
+        if (window && state)
+            close_projection(window, state);
+        return 0;
+    }
+    hide(window);
+    if (i30_usb_file_exists(pending))
+        DeleteFileW(pending);
+    refresh(window, state);
+    OutputDebugStringW(L"i30 automatic guest projection started; stock map remains visible until video media is ready.\r\n");
     return 1;
 }
 

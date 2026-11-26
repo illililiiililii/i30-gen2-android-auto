@@ -15,6 +15,7 @@ from patch_gd13my_startup import STARTUP_HOOK, STOCK
 RAM = 0x20000000
 HIDE = r'\DiskA\i30agree.opt'
 AUTO = r'\DiskA\i30auto.opt'
+BOOT_AUTO = r'\DiskA\i30boot.opt'
 CLOCK = r'\DiskA\Application\NAVI\i30-emu-utc.bin'
 
 
@@ -62,7 +63,8 @@ def exercise(pe, flags, mode=2, source=2, requested=0, existing=False, spawn=Tru
             result = 183 if existing else 0
         elif operation == 'stock_create_process':
             assert read_text(args[0]) == r'\DiskA\Application\NAVI\i30aa.exe'
-            assert read_text(args[1]) == ('-i30clock' if early else '-i30start') and args[2:] == [0, 0]
+            expected_command = ('-i30clock' if early else '-i30wake' if flags.get(BOOT_AUTO) else '-i30start')
+            assert read_text(args[1]) == expected_command and args[2:] == [0, 0]
             stack = cpu.reg_read(UC_ARM_REG_SP)
             options = struct.unpack('<6I', cpu.mem_read(stack, 24))
             assert options[:5] == (0, 0, 0, 0, 0) and options[5] == stack + 24
@@ -93,6 +95,8 @@ def main():
         'directory is not an opt-in': exercise(pe, {AUTO: 0x10}),
         'legacy consent flag ignored': exercise(pe, {HIDE: 0x80}),
         'start USB on stock NAVI MAIN acknowledgment': exercise(pe, {AUTO: 0x80}),
+        'boot receiver launches a message wake helper': exercise(pe, {BOOT_AUTO: 0x80}),
+        'boot receiver avoids duplicate USB owner': exercise(pe, {AUTO: 0x80, BOOT_AUTO: 0x80}),
         'start clock sync before stock startup': exercise(pe, {CLOCK: 0x80}, early=True),
         'stock startup without emulator clock file': exercise(pe, {}, early=True),
         'unrelated acknowledgment': exercise(pe, {AUTO: 0x80}, source=3),
@@ -106,6 +110,8 @@ def main():
         'directory is not an opt-in': [],
         'legacy consent flag ignored': [],
         'start USB on stock NAVI MAIN acknowledgment': ['event', 'start', 'close 61', 'close 62'],
+        'boot receiver launches a message wake helper': ['start', 'close 61', 'close 62'],
+        'boot receiver avoids duplicate USB owner': ['start', 'close 61', 'close 62'],
         'start clock sync before stock startup': ['start', 'close 61', 'close 62'],
         'stock startup without emulator clock file': [],
         'unrelated acknowledgment': [],

@@ -390,6 +390,7 @@ class NativeMenuVideoRun(GuestVideoRun):
     menu_retried = False
     menu_touch_at = None
     projection_tap_sent = False
+    auto_projection = False
 
     def tap(self, x, y):
         for _ in range(12):
@@ -409,6 +410,8 @@ class NativeMenuVideoRun(GuestVideoRun):
                 self.tap(400, 430)
                 self.consent_tap_sent = True
         if self.navigation_ready and not self.menu_requested:
+            if self.auto_projection:
+                return
             self.menu_requested = True
             self.menu_button.set()
         if self.menu_requested and not self.projection_tap_sent:
@@ -426,6 +429,12 @@ class NativeMenuVideoRun(GuestVideoRun):
             if self.menu_touch_at is not None and now >= self.menu_touch_at:
                 self.tap(399, 439)
                 self.projection_tap_sent = True
+
+
+class NativeAutoRun(NativeMenuVideoRun):
+    """Verify guest USB boot-auto without sending the projection menu touch."""
+
+    auto_projection = True
 
 
 class ReplugNativeMenuRun(NativeMenuVideoRun):
@@ -465,6 +474,10 @@ class ReplugNativeMenuRun(NativeMenuVideoRun):
             if colors and all(r < 35 and g > 210 and b < 35 for r, g, b in colors):
                 self.replug_pixels = colors
                 self.closing.set()
+
+
+class ReplugNativeAutoRun(ReplugNativeMenuRun):
+    auto_projection = True
 
 
 class NativeIntegrationRun(NativeMenuVideoRun):
@@ -665,19 +678,27 @@ def verify(args):
         staging = Path(staging)
         patch = staging / 'virtual-phone.img'
         shutil.copyfile(args.image, patch)
-        startup = None if args.native_menu else build_probe(
+        native_navigation = args.native_menu or args.native_auto
+        startup = None if native_navigation else build_probe(
             args.compiler, staging, args.lcd_bench, args.owned_window, args.calibrate, args.audio_query)
         with PyFatFS(str(patch), offset=PARTITION_OFFSET, preserve_case=True) as files:
             if startup is not None:
                 files.remove('/Application/uComH_New.exe')
                 files.writebytes('/Application/uComH_New.exe', startup)
             navi = '/Application/NAVI/'
+            # The virtual phone owns a short-lived test CA. Remove any AARE
+            # identity selector from this disposable image copy so its client
+            # certificate matches the temporary server identity below.
+            for name in ('i30-aare.opt', 'i30-aare-ca.pem', 'i30-aare-client.pem',
+                         'i30-aare-client-key.pem', 'i30-aare-peer-sha256.txt'):
+                if files.exists(navi + name):
+                    files.remove(navi + name)
             files.writebytes(navi + 'i30-ca.pem', cert.read_bytes())
             files.writebytes(navi + 'i30-client.pem', cert.read_bytes())
             files.writebytes(navi + 'i30-client-key.pem', key.read_bytes())
             files.writebytes(navi + 'i30-peer.txt', b'i30-mock.local\n')
         phone = (StreamingPhone(ctx, args.stream_frames, args.fps) if args.stream_frames else
-                 VirtualPhone(ctx, test_picture(frame=image), close_after_frame=not args.native_menu,
+                 VirtualPhone(ctx, test_picture(frame=image), close_after_frame=not native_navigation,
                               interleave_control=args.interleave_control))
         with args.disk.open('rb') as disk, patch.open('rb') as app:
             media = AppPartitionOverlay(disk, app)
@@ -686,20 +707,21 @@ def verify(args):
                 DISK_START_LBA, DISK_START_LBA + args.disk.stat().st_size // 512))
             output = args.output / 'virtual-phone'
             output.with_suffix('.serial.log').write_bytes(b'')
-            runner = (NativeIntegrationRun if args.stream_frames else ReplugNativeMenuRun if args.replug_after_frame else
+            runner = (NativeIntegrationRun if args.stream_frames else ReplugNativeAutoRun if args.native_auto and args.replug_after_frame else
+                      ReplugNativeMenuRun if args.replug_after_frame else NativeAutoRun if args.native_auto else
                       NativeMenuVideoRun if args.native_menu else GuestVideoRun)
             run = runner(args.rom.read_bytes(), card, SimpleQueue(), SimpleQueue(), Event(), Event(),
-                         output, phone_port=phone, auto_calibrate=args.calibrate or args.native_menu is not None,
+                         output, phone_port=phone, auto_calibrate=args.calibrate or native_navigation is not None,
                          usb_clock_units=round(args.usb_clock_mhz * 1_000_000),
                          **({'cycles': args.cycles, 'camera': args.camera, 'restore_map': args.restore_map}
                             if args.stream_frames else {}),
                          **({'display_mode': 2, 'assist_navi_start': True, 'assist_touch_calibration': True}
-                            if args.native_menu else {}))
+                            if native_navigation else {}))
             if image is not None:
                 run.reference_rgb = packed_rgb(image)
             if args.stream_frames:
                 phone.clock = run.clock_ticks
-            renderer = GuestGL(run, args.native_menu) if args.native_menu else None
+            renderer = GuestGL(run, native_navigation) if native_navigation else None
             started = monotonic()
             try:
                 report = run.run_window(args.seconds)
@@ -727,10 +749,11 @@ def verify(args):
                                                re.findall(rb'i30 WAVE caps (OUT|IN): ([a-f0-9]{8})', run.uart.output)}
                 status['wave_caps_data'] = {direction.decode(): result.decode() for direction, result in
                                             re.findall(rb'i30 WAVE data (OUT|IN): ([a-f0-9]{192})', run.uart.output)}
-            if args.native_menu:
+            if args.native_menu or args.native_auto:
                 status.update(stock_navigation=run.navigation_ready, stock_menu=NAVIGATION_MENU_ACK in run.uart.output,
                               stock_consent=b'BUTTON_PUSH_AGREE_ON' in run.uart.output,
                               projection_tap_sent=run.projection_tap_sent,
+                              boot_auto=bool(args.native_auto),
                               stock_display_publisher=b'i30 OEM MICOM display publisher ready.' in run.uart.output,
                               native_z_order=b'i30 native projection placed immediately above the stock map.' in run.uart.output)
             if args.replug_after_frame:
@@ -764,10 +787,16 @@ def verify(args):
                     run.lcd_mean_error <= LCD_RGB_ERROR_LIMIT)
     video_rendered = bool(status['media_acks'] and status['lcd_pixels_rgb'] and all(
         red > 210 and green < 35 and blue < 35 for red, green, blue in status['lcd_pixels_rgb']))
-    return video_rendered and (not args.replug_after_frame or bool(status['replug_pixels_rgb'])) and (
-        not args.native_menu or all(status[key] for key in
-        ('stock_consent', 'stock_navigation', 'stock_menu', 'projection_tap_sent',
-         'stock_display_publisher', 'native_z_order')))
+    native_verified = True
+    if args.native_menu:
+        native_verified = all(status[key] for key in
+                              ('stock_consent', 'stock_navigation', 'stock_menu', 'projection_tap_sent',
+                               'stock_display_publisher', 'native_z_order'))
+    elif args.native_auto:
+        native_verified = all(status[key] for key in
+                              ('stock_consent', 'stock_navigation', 'boot_auto',
+                               'stock_display_publisher', 'native_z_order'))
+    return video_rendered and (not args.replug_after_frame or bool(status['replug_pixels_rgb'])) and native_verified
 
 
 def main():
@@ -789,6 +818,8 @@ def main():
     mode.add_argument('--owned-window', action='store_true', help='Exercise the native window handoff using the current foreground owner')
     mode.add_argument('--native-menu', type=Path, metavar='STOCK_GDDNAVI',
                       help='Use the patched stock menu with the original navigation PE as the GLES reference')
+    mode.add_argument('--native-auto', type=Path, metavar='STOCK_GDDNAVI',
+                      help='Verify the guest boot-auto receiver without tapping the Android Auto menu')
     parser.add_argument('--calibrate', action='store_true', help='Complete the stock touch calibration before creating the test window')
     parser.add_argument('--replug-after-frame', action='store_true',
                         help='Disconnect after the first native frame and verify a fresh projected session')
@@ -807,11 +838,12 @@ def main():
         parser.error('--interleave-control requires --lcd-bench')
     if args.audio_query and not args.lcd_bench:
         parser.error('--audio-query requires --lcd-bench')
-    if args.native_menu and not json.loads(args.manifest.read_text(encoding='utf-8-sig')).get('stock_display_sha256'):
-        parser.error('--native-menu requires an image with the stock display publisher')
-    if args.replug_after_frame and not args.native_menu:
-        parser.error('--replug-after-frame requires --native-menu')
-    if args.stream_frames and (not args.native_menu or args.replug_after_frame or args.stream_frames < 12):
+    native_navigation = args.native_menu or args.native_auto
+    if native_navigation and not json.loads(args.manifest.read_text(encoding='utf-8-sig')).get('stock_display_sha256'):
+        parser.error('Native navigation mode requires an image with the stock display publisher')
+    if args.replug_after_frame and not native_navigation:
+        parser.error('--replug-after-frame requires --native-menu or --native-auto')
+    if args.stream_frames and (not args.native_menu or args.native_auto or args.replug_after_frame or args.stream_frames < 12):
         parser.error('--stream-frames requires --native-menu and at least 12 frames')
     if args.cycles < 1 or (not args.stream_frames and (args.camera or args.restore_map or args.cycles != 1)):
         parser.error('--cycles, --camera and --restore-map require the native streaming test')

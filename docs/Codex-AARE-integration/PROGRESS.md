@@ -19,3 +19,14 @@
 - 전체 에뮬레이터 약 2.5배를 목표로 같은 이미지의 기준을 다시 측정했다. C eMMC 읽기, IRQ 처리, 장치 폴링과 ARM 예외 주소 재사용으로 내비 준비가 176.903초에서 115.449초로 감소했다. 이 기준의 목표는 약 71초다. 실차용 이미지는 에뮬레이터 최적화 다음 단계다. [전체 처리량](EMULATOR_PERFORMANCE.md#전체-에뮬레이터-처리량)
 
 [소스 비교](COMPATIBILITY_ANALYSIS.md) · [실행 및 신뢰 등록](FINAL_HANDOFF.md)
+
+## 2026-11-27 후속: 부팅/USB 자동 실행
+
+- 설정 UI의 단일 시작 항목을 `USB 연결 시 AARE 자동 실행`과 `부팅 후 AARE 연결 대기`로 나눴다. 기존 `i30auto.opt` 설정은 USB attach monitor를 유지하고, 신규 `i30boot.opt`는 지도 UI 프로세스가 guest-native receiver를 띄운다. 두 항목은 기존 DiskA 파일 저장 방식을 사용한다.
+- USB 자동 경로에서 AOA 버전 응답을 받으면 임시 드라이버 등록과 named gate를 정리한 뒤 handoff marker를 쓴다. 부팅/USB helper는 500ms 간격으로 지도 foreground에 합성 WM_MOUSEMOVE를 보내고, 순정 입력 훅이 자동 시작 함수를 호출한다. 같은 프로세스 안의 visible 800×480 map HWND를 제한된 enumeration으로 찾는다. Boot auto가 같은 USB client를 시작할 때는 uComH의 listener를 생략해 HCD 소유 중복을 막는다.
+- 자동 투사 창은 지도 위에 소유된 상태로 숨겨진다. AAP media 준비 후 named render-pending event를 통해 기존 게스트 h264bsd/GDI 경로가 첫 프레임을 그릴 수 있고, 기존 `I30_AA_VIDEO_ACTIVE`가 확인된 뒤 화면을 표시한다. 재연결/인증 오류는 지도에 자동 overlay를 띄우지 않는다. decoder, TLS 또는 USB 수신을 호스트로 우회하지 않았다.
+- `tools/emulate_ce_usb.py` 및 시작 ARM hook 에뮬레이션에서 두 설정 저장/해제, 자동 AOA handoff, 합성 WM_MOUSEMOVE wake, 기존 touch 전달과 startup 중복 방지를 확인했다. 전체 Python 회귀는 93개 통과, 1개 skip.
+- v8 가상 이미지의 native-auto 시험에서 실제 순정 지도 ACK 뒤 자동 투사 창 시작, 가상 USB/AOA, TLS 1.2 상호 인증, 서비스 탐색과 `i30 CE projection frame presented.`까지 확인했다. 분리/재연결의 픽셀 감지 시험은 끝까지 확인되지 않아 미검증으로 남긴다. 물리 스마트폰 USB 권한/Trust, 실폰 최초 프레임, 실차 FPS와 ±5% 목표도 미검증이다.
+- 가상폰 시험과 재현 산출물은 `build/gd13my-aa-autostart-v8/`에 있다. 자동 시작 추가로 FPS 개선을 주장하지 않으며, 측정되지 않은 실제 지도 속도와 기존 약 +0.9% 표본 차이는 성능 향상으로 분류하지 않는다.
+
+GPU readback, 실측 지도 FPS와 DSP IOCTL ABI 결론은 이전 수치를 그대로 유지한다. 자세한 빌드·시험 상태는 [하드웨어 가속 인계](../Free-model-research/hardware-acceleration/FINAL_HANDOFF.md)에서 이어간다.

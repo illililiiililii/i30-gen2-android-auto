@@ -19,6 +19,7 @@ extern "C" {
 
 /* The navigation UI thread calls this from the stock menu touch handler. */
 int I30ToggleProjection(CE_HANDLE menu);
+int I30AutoStartProjection(CE_HANDLE menu);
 /* The stock .061 pre-dispatch path calls this before its own touch handler. */
 int I30RouteProjectionTouch(CE_HANDLE source, uint32_t message, int32_t point);
 

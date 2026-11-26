@@ -1083,6 +1083,7 @@ class Settings(Machine):
         self.files = set()
         self.polls = 0
         self.resets = []
+        self.wake_posts = 0
         self.keys = [r'Drivers\USB\ClientDrivers' + self.KEY_SUFFIX]
         self.keys.extend(r'Drivers\USB\LoadClients' + '\\' + group + self.KEY_SUFFIX for group in (
             r'6353_11520\Default\255', r'6353_11521\Default\255', r'1256_26720\Default\Default'))
@@ -1092,7 +1093,9 @@ class Settings(Machine):
             value = ''
         elif self.case == 'clock-boot':
             value = '-i30clock'
-        elif self.case in ('boot-disabled', 'resident'):
+        elif self.case == 'wake':
+            value = '-i30wake'
+        elif self.case in ('boot-disabled', 'resident', 'usb-auto'):
             value = '-i30start'
         elif self.case.startswith('owner-'):
             value = '-i30run:1234abcd'
@@ -1111,18 +1114,19 @@ class Settings(Machine):
             self.projection_owner = owner
             return 0
         assert module == self.base and not owner and not data
-        assert struct.unpack('<H', self.cpu.mem_read(template + 8, 2))[0] == 5
+        assert struct.unpack('<H', self.cpu.mem_read(template + 8, 2))[0] == 6
         title = self.text(template + 22)
         cursor = (template + 24 + len(title.encode('utf-16-le')) + 3) & ~3
         controls = []
-        for _ in range(5):
+        for _ in range(6):
             style, _, _, _, _, _, control, kind, control_type = struct.unpack(
                 '<II7H', self.cpu.mem_read(cursor, 22))
             label = self.text(cursor + 22)
             controls.append((control, kind, control_type, style & 15))
             cursor = (cursor + 26 + len(label.encode('utf-16-le')) + 3) & ~3
-        assert controls == [(1003, 0xffff, 0x80, 3), (1004, 0xffff, 0x82, 0),
-                            (1, 0xffff, 0x80, 1), (2, 0xffff, 0x80, 0), (1002, 0xffff, 0x80, 0)]
+        assert controls == [(1003, 0xffff, 0x80, 3), (1005, 0xffff, 0x80, 3),
+                            (1004, 0xffff, 0x82, 0), (1, 0xffff, 0x80, 1),
+                            (2, 0xffff, 0x80, 0), (1002, 0xffff, 0x80, 0)]
         self.dialog = callback - self.base
         return 2
 
@@ -1135,7 +1139,7 @@ class Settings(Machine):
         return 1
 
     def SendMessageW(self, checkbox, message, selected, reserved, *_):
-        assert checkbox == 1003 and not reserved
+        assert checkbox in (1003, 1005) and not reserved
         if message == 0xf1:
             self.checks[checkbox] = selected
             return 0
@@ -1163,8 +1167,11 @@ class Settings(Machine):
         return 1
 
     def DeleteFileW(self, name, *_):
-        self.files.remove(self.text(name))
-        return 1
+        path = self.text(name)
+        if path in self.files:
+            self.files.remove(path)
+            return 1
+        return 0
 
     def EndDialog(self, window, selection, *_):
         assert (window, selection) == (20, 1)
@@ -1181,12 +1188,15 @@ class Settings(Machine):
 
     def GetFileAttributesW(self, path, *_):
         name = self.text(path)
-        if name == r'\DiskA\i30auto.opt':
+        if name in (r'\DiskA\i30auto.opt', r'\DiskA\i30boot.opt',
+                    r'\DiskA\i30-aa-usb-pending.opt'):
             if self.case == 'resident':
-                return 0x80 if self.polls < 3 else 0xffffffff
+                return 0x80 if name.endswith('i30auto.opt') and self.polls < 3 else 0xffffffff
+            if self.case == 'usb-auto':
+                return 0x80 if name.endswith('i30auto.opt') or name in self.files else 0xffffffff
             if self.case in ('preferences', 'boot-disabled', 'clock-boot'):
                 return 0x80 if name in self.files else 0xffffffff
-            return 0x80
+            return 0x80 if name.endswith('i30auto.opt') else 0xffffffff
         if self.case.startswith('owner-') and name.endswith(r'\NAVI\i30-ca.der'):
             return 0x80
         assert name.endswith(r'\NAVI\i30usb.dll')
@@ -1201,18 +1211,34 @@ class Settings(Machine):
         return len(self.events)
 
     def GetForegroundWindow(self, *_):
-        assert self.case.startswith('owner-')
+        if self.case in ('wake', 'usb-auto'):
+            return 0x5678
+        assert self.case.startswith('owner-'), self.case
         return 0x1234abcd if self.case == 'owner-current' else 0x5678
+
+    def FindWindowW(self, name, title, *_):
+        assert self.text(name) == 'I30.GD13MY.NavigationProjection.1' and not title
+        return 0x3456 if self.wake_posts >= 2 else 0
+
+    def PostMessageW(self, window, message, wparam, lparam, *_):
+        assert self.case in ('wake', 'usb-auto')
+        assert (window, message, wparam, lparam) == (0x5678, 0x0200, 0, (479 << 16) | 790)
+        self.wake_posts += 1
+        return 1
 
     def GetLastError(self, *_):
         return 183 if self.case == 'already-running' else 0
+
+    def Sleep(self, milliseconds, *_):
+        assert self.case in ('wake', 'usb-auto') and milliseconds == 500
+        return 0
 
     def EventModify(self, gate, operation, *_):
         if self.case.startswith('owner-'):
             assert (gate, operation) == (20, 3)
             return 1
         if operation == 2:
-            assert self.case == 'resident' and gate in (3, 4)
+            assert self.case in ('resident', 'usb-auto') and gate in (3, 4)
             self.resets.append(gate)
             return 1
         assert gate == 1 and operation == 3
@@ -1258,11 +1284,13 @@ class Settings(Machine):
         return 0
 
     def WaitForMultipleObjects(self, count, values, wait_all, timeout, *_):
-        assert (count, wait_all, timeout) == (2, 0, 1000 if self.case == 'resident' else 35000)
+        assert (count, wait_all, timeout) == (2, 0, 1000 if self.case in ('resident', 'usb-auto') else 35000)
         assert [self.word(values + i * 4) for i in range(2)] == [3, 4]
         assert set(self.values) == set(self.keys) and all(self.values[key] for key in self.keys[1:])
-        if self.case == 'resident':
-            result = (0, 1, 258)[self.polls]
+        if self.case in ('resident', 'usb-auto'):
+            if self.case == 'usb-auto':
+                return 0
+            result = (1, 1, 258)[self.polls]
             self.polls += 1
             return result
         return {'version-ok': 0, 'version-failed': 1}.get(self.case, 258)
@@ -1286,25 +1314,36 @@ class Settings(Machine):
         assert self.removed == list(reversed(self.registrations))
         assert not self.values and not self.handles
         return {'registrations': self.registrations, 'registered_then_removed': self.removed,
-                'result': self.messages[-1] if self.messages else 'skipped', 'status_resets': self.resets}
+                'result': self.messages[-1] if self.messages else 'skipped', 'status_resets': self.resets,
+                'files': sorted(self.files)}
 
     def exercise_preferences(self):
         self.start()
         assert self.dialog is not None
         self.run(self.dialog, (20, 0x110, 0, 0))
-        assert self.checks == {1003: 0}
+        assert self.checks == {1003: 0, 1005: 0}
         self.checks[1003] = 1
         self.run(self.dialog, (20, 0x111, 1, 0))
         assert self.files == {r'\DiskA\i30auto.opt'}
         self.run(self.dialog, (20, 0x110, 0, 0))
-        assert self.checks == {1003: 1}
+        assert self.checks == {1003: 1, 1005: 0}
+        self.checks[1005] = 1
+        self.run(self.dialog, (20, 0x111, 1, 0))
+        assert self.files == {r'\DiskA\i30auto.opt', r'\DiskA\i30boot.opt'}
+        self.run(self.dialog, (20, 0x110, 0, 0))
+        assert self.checks == {1003: 1, 1005: 1}
         self.checks[1003] = 0
+        self.run(self.dialog, (20, 0x111, 1, 0))
+        assert self.files == {r'\DiskA\i30boot.opt'}
+        self.run(self.dialog, (20, 0x110, 0, 0))
+        assert self.checks == {1003: 0, 1005: 1}
+        self.checks[1005] = 0
         self.run(self.dialog, (20, 0x111, 1, 0))
         assert not self.files
         self.run(self.dialog, (20, 0x111, 1002, 0))
         assert 'No supported phone' in self.messages[-1]
         assert not self.values and self.removed == list(reversed(self.registrations))
-        return 'Default off, setting and clearing the boot flag, and inline USB test verified'
+        return 'Both auto-run flags default off, persist independently, and clear cleanly'
 
 
 def stress_frames(fps, count=8, width=800, motion=False):
@@ -1560,14 +1599,16 @@ def test_stock_touch_route(path):
     for case, code, module, claimed in (('before-projection', 0x201, 0, 0), ('covered', 0x201, 1, 0),
                                         ('down', 0x201, 1, 1), ('move', 0x200, 1, 1), ('up', 0x202, 1, 1),
                                         ('popup-down', 0x201, 1, 1), ('popup-up', 0x202, 1, 1),
-                                        ('non-pointer', 0x113, 1, 0)):
+                                        ('timer-auto', 0x113, 1, 0), ('paint-auto', 0x00f, 1, 0),
+                                        ('wake-auto', 0x200, 1, 1),
+                                        ('non-pointer', 0x100, 1, 0)):
         cpu = Uc(UC_ARCH_ARM, UC_MODE_ARM)
         image = pe.get_memory_mapped_image()
         cpu.mem_map(base, (len(image) + 0xfff) & ~0xfff)
         cpu.mem_write(base, image)
         cpu.mem_map(RAM, 0x10000)
         cpu.mem_map(STUB, 0x1000)
-        hwnd, point = 0x1234, 400 | 240 << 16
+        hwnd, point = 0x1234, (790 | 479 << 16) if case == 'wake-auto' else 400 | 240 << 16
         popup = (hwnd if case.startswith('popup-') else 0x2345) if module else 0
         cpu.mem_write(RAM, struct.pack('<IIII', hwnd, code, 0, point))
         cpu.mem_write(iat.address, struct.pack('<I', STUB))
@@ -1595,13 +1636,20 @@ def test_stock_touch_route(path):
                     calls.append('get-module')
                 elif address == STUB:
                     assert r0 == module
-                    assert bytes(cpu.mem_read(r1, 48)).decode('utf-16le').rstrip('\0') == 'I30RouteProjectionTouch'
+                    auto = case in ('timer-auto', 'paint-auto') or (case in ('move', 'wake-auto') and 'auto-start' not in calls)
+                    symbol = 'I30AutoStartProjection' if auto else 'I30RouteProjectionTouch'
+                    actual_symbol = bytes(cpu.mem_read(r1, 96)).decode('utf-16le').split('\0', 1)[0]
+                    assert actual_symbol == symbol, (case, calls, symbol, actual_symbol)
                     value = STUB + 4
                     calls.append('resolve')
                 elif address == STUB + 4:
-                    assert (r0, r1, r2) == (hwnd, code, point)
+                    auto = case in ('timer-auto', 'paint-auto') or (case in ('move', 'wake-auto') and 'auto-start' not in calls)
+                    if auto:
+                        assert r0 == hwnd
+                    else:
+                        assert (r0, r1, r2) == (hwnd, code, point)
                     value = claimed
-                    calls.append('route')
+                    calls.append('auto-start' if auto else 'route')
                 else:
                     assert r0 == RAM
                     assert struct.unpack('<IIII', cpu.mem_read(r0, 16)) == (hwnd, code, 0, point)
@@ -1613,10 +1661,13 @@ def test_stock_touch_route(path):
         code_hook = cpu.hook_add(UC_HOOK_CODE, call)
         cpu.emu_start(base + section.VirtualAddress, MARK, timeout=1_000_000, count=1000)
         cpu.hook_del(code_hook)
-        expected = [] if case == 'non-pointer' else ['find-window']
-        if popup == hwnd:
+        expected = ['get-module', 'resolve', 'auto-start', 'find-window', 'get-module', 'resolve', 'route'] \
+            if case in ('move', 'wake-auto') else (
+            ['get-module', 'resolve', 'auto-start'] if case in ('timer-auto', 'paint-auto') else (
+            [] if case == 'non-pointer' else ['find-window']))
+        if case not in ('timer-auto', 'paint-auto', 'move', 'wake-auto') and popup == hwnd:
             expected.append('dispatch')
-        elif expected:
+        elif expected and case not in ('timer-auto', 'paint-auto', 'move', 'wake-auto'):
             expected.append('get-module')
             if module:
                 expected.extend(('resolve', 'route'))
@@ -1655,7 +1706,7 @@ def main():
     assert all(not result['accepted'] for name, result in client.items() if name not in ('switch', 'version'))
     assert client['timeout']['wait_ms'] == 3000 and client['timeout']['closed_transfers'] == 1
     settings = {case: Settings(args.artifacts / 'i30aa.exe', case).start()
-                for case in ('version-ok', 'version-failed', 'timeout', 'no-accessory-reenumeration',
+                for case in ('version-ok', 'version-failed', 'timeout', 'no-accessory-reenumeration', 'usb-auto', 'wake',
                              'cancel', 'missing-driver', 'already-running', 'create-failure', 'write-failure',
                              'existing-key', 'boot-disabled', 'clock-boot', 'resident')}
     assert 'Phone answered' in settings['version-ok']['result']
@@ -1668,7 +1719,12 @@ def main():
     assert not settings['clock-boot']['registrations']
     assert settings['clock-boot']['result'] == 'i30 CE clock set from emulator UTC.\r\n'
     assert settings['resident']['result'] == 'Android Auto auto-connect stopped.'
-    assert settings['resident']['status_resets'] == [3, 4]
+    assert settings['resident']['status_resets'] == [4, 4]
+    assert settings['usb-auto']['result'].startswith('Phone answered')
+    assert settings['usb-auto']['files'] == [r'\DiskA\i30-aa-usb-pending.opt']
+    wake_test = Settings(args.artifacts / 'i30aa.exe', 'wake')
+    wake_test.start()
+    assert wake_test.wake_posts == 2
     preferences = Settings(args.artifacts / 'i30aa.exe', 'preferences').exercise_preferences()
     owners = {}
     for case in ('owner-current', 'owner-replaced'):
