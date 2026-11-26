@@ -8,11 +8,11 @@
 Set-Location F:\i30-gen2-android-auto
 $disk = Join-Path $env:LOCALAPPDATA 'i30-gd13my/codex-auth-map-cache/gd13my-media-v2.img'
 .\tools\run_gd13my_phase78.ps1 -DiskPath $disk `
-    -StockProjectionImage E:/i30-gd13my-images/opencode-resume-perf/touch/gd13my-aare-stock-display.img `
-    -OutputDirectory E:/i30-gd13my-images/opencode-resume-perf/touch/live
+    -StockProjectionImage E:/i30-gd13my-images/opencode-resume-perf/touch/gd13my-aare-settings-o2.img `
+    -OutputDirectory E:/i30-gd13my-images/opencode-resume-perf/touch/aare-settings-live
 ```
 
-1. 순정 시작 화면에서 **동의함**을 누른다. 지도가 나타나면 **내비 메뉴(F2) → Android Auto**를 선택한다. 첫 F2가 지도만 전면에 표시하면 내비 메뉴를 한 번 더 누른다. **사용법 보기**에서 안내와 설치 페이지의 공식 다운로드 QR을 확인할 수 있다.
+1. 순정 시작 화면에서 **동의함**을 누른다. 지도가 나타나면 **내비 메뉴(F2) → AARE**를 선택한다. 첫 F2가 지도만 전면에 표시하면 내비 메뉴를 한 번 더 누른다. **사용법 보기**에서 안내와 설치 페이지의 공식 다운로드 QR을 확인할 수 있다. **내비 설정 → 기타 → AARE**에서는 부팅 후 USB 감지 여부를 설정한다.
 2. 폰에서 AARE를 열고 데이터 USB 케이블을 연결한다. USB 앱 선택 또는 접근 권한이 나타나면 AARE를 선택한다. 기존 Android Auto가 이미 USB를 사용 중이면 세션을 닫고 케이블을 분리했다가 다시 연결한다.
 3. 처음에는 AARE 홈 화면이나 알림에 수신기 인증서 지문과 **Trust**가 표시된다. 수신기에서 생성한 SHA-256과 전체 지문이 같은 경우 승인한다. 그 뒤 케이블을 다시 연결한다.
 4. 실폰 확인은 WinCE 로그의 TLS 인증, `AUTH_COMPLETE`, 서비스 탐색, 첫 프레임과 순정 화면 표시를 함께 확인한다. AARE 버튼을 눌러 화면이 변하는지 본 뒤 케이블을 분리하고 다시 꽂아 새 TLS 세션과 화면 복귀를 확인한다.

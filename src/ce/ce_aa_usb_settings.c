@@ -28,6 +28,9 @@ static const CE_WCHAR autostart[] = WIDE_STRING(I30_USB_STARTUP_PREF);
 
 /* Standard CE dialog template. */
 enum { USB_TEST = 1002, AUTO_CHECK = 1003, STATUS = 1004, SAVE = 1, CANCEL = 2 };
+#define SETTINGS_TITLE L"AARE 설정"
+#define STARTUP_LABEL L"부팅 후 AARE USB 감지"
+#define STATUS_LABEL L"처음 한 번 휴대폰에서 USB 접근과 수신기 인증서를 승인하세요."
 #define CONTROL_TEMPLATE(caption) struct __attribute__((packed, aligned(4))) { \
     uint32_t style, extended; uint16_t x, y, w, h, id, kind, class_id; \
     CE_WCHAR label[sizeof(caption) / sizeof(CE_WCHAR)]; uint16_t extra; \
@@ -35,21 +38,24 @@ enum { USB_TEST = 1002, AUTO_CHECK = 1003, STATUS = 1004, SAVE = 1, CANCEL = 2 }
 static const struct __attribute__((packed, aligned(4))) {
     uint32_t style, extended;
     uint16_t count, x, y, w, h, menu, class_id;
-    CE_WCHAR text[13];
-    CONTROL_TEMPLATE(L"부팅 시 Android Auto 연결 시도") auto_checkbox;
-    CONTROL_TEMPLATE(L"") status;
+    CE_WCHAR text[sizeof(SETTINGS_TITLE) / sizeof(CE_WCHAR)];
+    CONTROL_TEMPLATE(STARTUP_LABEL) auto_checkbox __attribute__((aligned(4)));
+    CONTROL_TEMPLATE(STATUS_LABEL) status;
     CONTROL_TEMPLATE(L"저장") save;
     CONTROL_TEMPLATE(L"닫기") cancel;
     CONTROL_TEMPLATE(L"USB 연결 시험") usb;
 } settings = {
-    0x80c80080, 0, 5, 0, 0, 212, 97, 0, 0, L"Android Auto",
-    {0x50010003, 0, 12, 13, 189, 16, AUTO_CHECK, 0xffff, 0x80, L"부팅 시 Android Auto 연결 시도", 0},
-    {0x50000000, 0, 12, 35, 188, 33, STATUS, 0xffff, 0x82, L"", 0},
+    0x80c80080, 0, 5, 0, 0, 212, 97, 0, 0, SETTINGS_TITLE,
+    {0x50010003, 0, 12, 13, 189, 16, AUTO_CHECK, 0xffff, 0x80, STARTUP_LABEL, 0},
+    {0x50000000, 0, 12, 35, 188, 33, STATUS, 0xffff, 0x82, STATUS_LABEL, 0},
     {0x50010001, 0, 12, 71, 42, 17, SAVE, 0xffff, 0x80, L"저장", 0},
     {0x50010000, 0, 60, 71, 42, 17, CANCEL, 0xffff, 0x80, L"닫기", 0},
     {0x50010000, 0, 115, 71, 85, 17, USB_TEST, 0xffff, 0x80, L"USB 연결 시험", 0},
 };
 #undef CONTROL_TEMPLATE
+#undef SETTINGS_TITLE
+#undef STARTUP_LABEL
+#undef STATUS_LABEL
 
 static int save_preference(const CE_WCHAR *path, int value)
 {
@@ -164,7 +170,7 @@ static int settings_dialog(CE_HANDLE window, uint32_t msg, uint32_t command, int
             return 1;
         }
         if (id == USB_TEST) {
-            SetDlgItemTextW(window, STATUS, L"35초 안에 이 기기의 USB 포트에 폰을 연결하세요.");
+            SetDlgItemTextW(window, STATUS, L"휴대폰에서 AARE를 열고 35초 안에 USB로 연결하세요.");
             UpdateWindow(window);
             SetDlgItemTextW(window, STATUS, test_usb(0));
             return 1;

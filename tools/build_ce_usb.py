@@ -148,7 +148,7 @@ def build(compiler, output, bearssl_source=None, h264_source=None, virtual_lcd_b
         decoder = None
         if h264_source is not None:
             decoder = build_library(compiler, h264_source / 'src', work, options, 'h264',
-                                    (f'-I{h264_source / "src"}',), run_tool)
+                                    (f'-I{h264_source / "src"}', '-O2'), run_tool)
         for target, unit, api, is_dll in (
                 (DRIVER, 'ce_aa_usb_client.c', DRIVER_API, True),
                 ('i30aa.exe', 'ce_aa_usb_settings.c', SETTINGS_API, False),

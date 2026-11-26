@@ -21,9 +21,10 @@ FONT = {
     'd': (1, 1, 7, 9, 9, 9, 7), 'r': (0, 0, 6, 9, 8, 8, 8),
     'o': (0, 0, 6, 9, 9, 9, 6), 'i': (2, 0, 2, 2, 2, 2, 2),
     'u': (0, 0, 9, 9, 9, 9, 7), 't': (4, 4, 14, 4, 4, 4, 2),
+    'R': (30, 17, 17, 30, 20, 18, 17), 'E': (31, 16, 16, 30, 16, 16, 31),
     ' ': (0, 0, 0, 0, 0, 0, 0),
 }
-TITLE = 'Android Auto'
+TITLE = 'AARE'
 SHOT = 'IDC_SHOT_NMN09'
 MENU_SHOT = 'NMN01'
 BUTTON_ID = 31
@@ -92,7 +93,7 @@ def patch_resources(stock):
         if key not in new_ids:
             original = resource_start + index[key]
             data_length, = struct.unpack_from('<I', stock, original + 3)
-            guid = sha256(b'GD13MY .061 Android Auto settings' + key).digest()[:16]
+            guid = sha256(b'GD13MY .061 ' + TITLE.encode('ascii') + b' settings' + key).digest()[:16]
             if guid in index:
                 raise ValueError('GCF resource ID collision')
             new_ids[key] = guid

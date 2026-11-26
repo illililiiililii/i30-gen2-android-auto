@@ -1112,7 +1112,8 @@ class Settings(Machine):
             return 0
         assert module == self.base and not owner and not data
         assert struct.unpack('<H', self.cpu.mem_read(template + 8, 2))[0] == 5
-        cursor = template + 48
+        title = self.text(template + 22)
+        cursor = (template + 24 + len(title.encode('utf-16-le')) + 3) & ~3
         controls = []
         for _ in range(5):
             style, _, _, _, _, _, control, kind, control_type = struct.unpack(
