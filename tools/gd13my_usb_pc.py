@@ -1,5 +1,6 @@
 """Back the .061 emulated MUSB port with a selected physical Android phone."""
 
+from concurrent.futures import ThreadPoolExecutor, wait
 from pathlib import Path
 from struct import unpack_from
 import sys
@@ -37,6 +38,8 @@ class PhonePort:
         self.control_packet_size = 64
         self.next_poll = float('inf') if wait_for_test else 0
         self.next_bulk_retry = 0
+        self.bulk_reader = None
+        self.bulk_input = None
         self.controller = HostMusb(self)
         if wait_for_test:
             self.notify(f'물리 USB {self.port} · CE 시험 시작 대기')
@@ -47,16 +50,22 @@ class PhonePort:
             self.last_status = text
 
     def reset(self):
+        pending, self.bulk_input = self.bulk_input, None
+        if pending is not None and not pending.cancel():
+            wait((pending,))
         self.config = 0
         self.version_input = self.version_packet = None
 
     def close_device(self):
+        self.reset()
+        if self.bulk_reader is not None:
+            self.bulk_reader.shutdown()
+            self.bulk_reader = None
         if self.link is not None:
             self.link.close()
         if self.raw is not None and (self.link is None or self.raw is not self.link.device):
             self.backend.dispose(self.raw)
         self.device = self.raw = self.link = None
-        self.reset()
         self.controller.set_cable(False)
 
     def reconnect(self):
@@ -136,19 +145,22 @@ class PhonePort:
             self.notify(f'Windows USB 접근 실패 · {error}')
             return False
 
-    def exchange(self, label, function, *args, pending_on_timeout=False, **kwargs):
+    def exchange(self, label, function, *args, **kwargs):
         try:
             return self.backend.invoke(function, *args, **kwargs)
-        except Disconnected as error:
+        except TransportError as error:
+            self.transfer_failed(label, error)
+
+    def transfer_failed(self, label, error, pending_on_timeout=False):
+        if isinstance(error, Disconnected):
             self.close_device()
             self.next_poll = monotonic() + 0.75
             self.notify('물리 USB 재열거 대기')
-            raise UsbTransferError(str(error)) from error
-        except TransportError as error:
-            if pending_on_timeout and isinstance(error, Timeout):
-                raise UsbTransferPending from error
+        elif pending_on_timeout and isinstance(error, Timeout):
+            raise UsbTransferPending from error
+        else:
             self.notify(f'{label} 실패 · {error}')
-            raise UsbTransferError(str(error)) from error
+        raise UsbTransferError(str(error)) from error
 
     def control(self, setup, data):
         kind, request, value, index, length = setup
@@ -215,9 +227,7 @@ class PhonePort:
         link = self.accessory_link()
         if address != link.input_endpoint or not 0 < size <= 512:
             raise UsbTransferError('Unknown accessory input endpoint or packet size')
-        # A libusb read timeout can mean repeated NAKs while the app prepares data.
-        data = bytes(self.exchange('USB bulk 입력', link.device.read, address, size,
-                                   timeout=15, pending_on_timeout=True))
+        data = self.read_bulk_packet(link, address, size)
         if self.version_input is not None:
             self.version_input.extend(data)
             if len(self.version_input) >= 12:
@@ -229,3 +239,17 @@ class PhonePort:
                         self.version_packet = packet
                         self.notify(f'WinCE에서 실폰 Android Auto 버전 응답 수신 · {packet.hex()}')
         return data
+
+    def read_bulk_packet(self, link, address, size):
+        # Keep CE timers and IRQs running while WinUSB waits for the phone to send data.
+        if self.bulk_input is None:
+            if self.bulk_reader is None:
+                self.bulk_reader = ThreadPoolExecutor(max_workers=1, thread_name_prefix='gd13my-usb-in')
+            self.bulk_input = self.bulk_reader.submit(self.backend.invoke, link.device.read, address, size, timeout=15)
+        if not self.bulk_input.done():
+            raise UsbTransferPending
+        pending, self.bulk_input = self.bulk_input, None
+        try:
+            return bytes(pending.result())
+        except TransportError as error:
+            self.transfer_failed('USB bulk 입력', error, pending_on_timeout=True)

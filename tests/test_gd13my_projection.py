@@ -2,12 +2,14 @@ from pathlib import Path
 from queue import SimpleQueue
 import sys
 from tempfile import TemporaryDirectory
+from threading import Event
 import unittest
 from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 
 from gd13my_projection import Projection, ProjectionSurface
+from gd13my_musb import UsbTransferPending
 from gd13my_usb_pc import PhonePort, VERSION_REQUEST
 from i30_receiver.audio import AudioMixer, Microphone
 from i30_receiver.cli import openssl_path
@@ -57,7 +59,9 @@ class Gd13myProjectionTests(unittest.TestCase):
         port.link, port.controller, port.notify, port.trace = Mock(), Mock(), Mock(), Mock()
         port.device, port.raw, port.config = Mock(), port.link.device, 1
         port.link.input_endpoint, port.link.output_endpoint = 0x81, 0x01
-        port.exchange = Mock(side_effect=(len(VERSION_REQUEST), VERSION_RESPONSE[:7], VERSION_RESPONSE[7:]))
+        port.bulk_input = None
+        port.exchange = Mock(return_value=len(VERSION_REQUEST))
+        port.read_bulk_packet = Mock(side_effect=(VERSION_RESPONSE[:7], VERSION_RESPONSE[7:]))
         port.write(0x01, VERSION_REQUEST)
         self.assertIsNone(port.take_projection_link())
         port.read(0x81, 512)
@@ -69,6 +73,28 @@ class Gd13myProjectionTests(unittest.TestCase):
         port.controller.set_cable.assert_called_once_with(False)
         self.assertEqual(port.next_poll, float('inf'))
         link.close.assert_not_called()
+
+    def test_pending_physical_read_does_not_wait_on_the_guest_thread(self):
+        ready = Event()
+        port = PhonePort.__new__(PhonePort)
+        port.bulk_reader = port.bulk_input = None
+        port.backend, link = Mock(), Mock()
+
+        def physical_read(*_args, **_kwargs):
+            self.assertTrue(ready.wait(timeout=2))
+            return b'usb'
+
+        port.backend.invoke.side_effect = physical_read
+        try:
+            with self.assertRaises(UsbTransferPending):
+                port.read_bulk_packet(link, 0x81, 512)
+            ready.set()
+            self.assertEqual(port.bulk_input.result(timeout=2), b'usb')
+            self.assertEqual(port.read_bulk_packet(link, 0x81, 512), b'usb')
+            port.backend.invoke.assert_called_once_with(link.device.read, 0x81, 512, timeout=15)
+        finally:
+            ready.set()
+            port.bulk_reader.shutdown()
 
     @unittest.skipUnless(av and openssl_path(), 'Requires local PyAV and OpenSSL')
     def test_usb_handoff_completes_tls_video_input_audio_and_stock_priority(self):
