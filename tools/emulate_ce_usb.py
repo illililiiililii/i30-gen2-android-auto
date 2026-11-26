@@ -1546,15 +1546,19 @@ def test_continuous(path, openssl, seconds, fps, progress, motion, profile):
 
 
 def test_stock_touch_route(path):
+    from inspect_ce_pe import rom_exports
     from patch_gd13my_settings import THUNKS
 
     pe = pefile.PE(str(path))
     base = pe.OPTIONAL_HEADER.ImageBase
     section = next(section for section in pe.sections if section.Name.rstrip(b'\0') == b'.i30nav')
     iat, = pe.DIRECTORY_ENTRY_IMPORT[-1].imports
+    dispatch_ordinal = rom_exports()['DispatchMessageW']
+    dispatch, = (item for item in pe.DIRECTORY_ENTRY_IMPORT[0].imports if item.ordinal == dispatch_ordinal)
     results = {}
     for case, code, module, claimed in (('before-projection', 0x201, 0, 0), ('covered', 0x201, 1, 0),
                                         ('down', 0x201, 1, 1), ('move', 0x200, 1, 1), ('up', 0x202, 1, 1),
+                                        ('popup-down', 0x201, 1, 1), ('popup-up', 0x202, 1, 1),
                                         ('non-pointer', 0x113, 1, 0)):
         cpu = Uc(UC_ARCH_ARM, UC_MODE_ARM)
         image = pe.get_memory_mapped_image()
@@ -1563,8 +1567,10 @@ def test_stock_touch_route(path):
         cpu.mem_map(RAM, 0x10000)
         cpu.mem_map(STUB, 0x1000)
         hwnd, point = 0x1234, 400 | 240 << 16
+        popup = (hwnd if case.startswith('popup-') else 0x2345) if module else 0
         cpu.mem_write(RAM, struct.pack('<IIII', hwnd, code, 0, point))
         cpu.mem_write(iat.address, struct.pack('<I', STUB))
+        cpu.mem_write(dispatch.address, struct.pack('<I', STUB + 8))
         cpu.reg_write(UC_ARM_REG_R0 + 9, RAM)  # ARM sb points to MSG.
         cpu.reg_write(UC_ARM_REG_R0 + 11, 24)  # Active stock navigation menu shot.
         cpu.reg_write(UC_ARM_REG_SP, STACK)
@@ -1575,9 +1581,14 @@ def test_stock_touch_route(path):
             if address in (THUNKS['stock_resume'], THUNKS['stock_consumed']):
                 calls.append('consumed' if address == THUNKS['stock_consumed'] else 'stock')
                 cpu.emu_stop()
-            elif address in (0x2d030c, STUB, STUB + 4):
+            elif address in (THUNKS['stock_find_window'], 0x2d030c, STUB, STUB + 4, STUB + 8):
                 r0, r1, r2 = (cpu.reg_read(UC_ARM_REG_R0 + index) for index in range(3))
-                if address == 0x2d030c:
+                if address == THUNKS['stock_find_window']:
+                    assert bytes(cpu.mem_read(r0, 68)).decode('utf-16le').rstrip('\0') == 'I30.GD13MY.NavigationProjection.1'
+                    assert not r1
+                    value = popup
+                    calls.append('find-window')
+                elif address == 0x2d030c:
                     assert bytes(cpu.mem_read(r0, 22)).decode('utf-16le').rstrip('\0') == 'i30nav.dll'
                     value = module
                     calls.append('get-module')
@@ -1586,17 +1597,28 @@ def test_stock_touch_route(path):
                     assert bytes(cpu.mem_read(r1, 48)).decode('utf-16le').rstrip('\0') == 'I30RouteProjectionTouch'
                     value = STUB + 4
                     calls.append('resolve')
-                else:
+                elif address == STUB + 4:
                     assert (r0, r1, r2) == (hwnd, code, point)
                     value = claimed
                     calls.append('route')
+                else:
+                    assert r0 == RAM
+                    assert struct.unpack('<IIII', cpu.mem_read(r0, 16)) == (hwnd, code, 0, point)
+                    value = 0  # Dispatch returns the popup's WndProc return value.
+                    calls.append('dispatch')
                 cpu.reg_write(UC_ARM_REG_R0, value)
                 cpu.reg_write(UC_ARM_REG_PC, cpu.reg_read(UC_ARM_REG_LR))
 
         code_hook = cpu.hook_add(UC_HOOK_CODE, call)
         cpu.emu_start(base + section.VirtualAddress, MARK, timeout=1_000_000, count=1000)
         cpu.hook_del(code_hook)
-        expected = [] if case == 'non-pointer' else ['get-module', 'resolve', 'route'] if module else ['get-module']
+        expected = [] if case == 'non-pointer' else ['find-window']
+        if popup == hwnd:
+            expected.append('dispatch')
+        elif expected:
+            expected.append('get-module')
+            if module:
+                expected.extend(('resolve', 'route'))
         assert calls == expected + ['consumed' if claimed else 'stock'], (case, calls)
         assert cpu.reg_read(UC_ARM_REG_R0 + 3) == code
         assert cpu.reg_read(UC_ARM_REG_SP) == STACK

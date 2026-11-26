@@ -54,3 +54,11 @@
 보정 시험에서 WinCE는 74바이트를 받아 TLS 1.2 상호 인증, `AUTH_COMPLETE`, 서비스 탐색, H.264 영상 채널 개설 및 첫 프레임을 기록했다. AARE는 수신기 인증서, 영상 및 입력 채널, 800×480 패널을 확인했다. 에뮬레이터 창에서 실제 화면이 갱신됐다. 앱 목록 터치는 화면 전환으로 이어지지 않았다.
 
 원본은 로컬 `E:/i30-gd13my-images/opencode-resume-perf/live-musb/`의 `android-first-frame.log`, WinCE UART, HCD 및 수신 길이 로그와 `aare-live-800x480.png`에 있다.
+
+## 직접 터치 재시험
+
+순정 내비 메시지 처리부에서 투사 창 앞으로 들어온 누름과 뗌이 투사 창의 메시지 처리기로 전달되지 않았다. 해당 창을 대상으로 하는 포인터 메시지를 순정 `DispatchMessageW`로 한 번 보내고, 다른 창으로 캡처가 이전된 경우에는 접촉을 취소한다. 기존 맵 창의 입력 경로는 그대로 이용한다. ARM 회귀에서 기존 전달 경로와 투사 창의 누름·뗌을 확인했다.
+
+14:52 새 이미지에서 운영 코드의 MUSB 보정만으로 상호 TLS, `AUTH_COMPLETE`, 영상 채널과 실폰 화면을 다시 확인했다. 시험 좌표 `(48, 440)`의 눌림과 뗌이 순정 내비와 투사 창의 `handle_touch` 모두에 도착했고 WinCE의 입력 큐 읽기 요청도 확인했다. 앱 목록 전환은 관찰되지 않았다. 이 실행의 `.integrated-touch.log`와 UART는 로컬 `E:/i30-gd13my-images/opencode-resume-perf/touch/live/`에 있다.
+
+첫 화면이 위에서 아래로 나눠 보였으며, 앞선 시험의 AARE 로그는 프레임 600 시점에 누적 541개 드롭을 기록했다. 기존 ARM 계측의 고움직임 영상은 프레임당 H.264 디코딩 평균 224.74ms, BGRA 변환 평균 70.63ms였다. 실제 창은 여기에 WinCE의 `StretchDIBits` 화면 복사와 에뮬레이터 캡처가 더해진다. 순정 OMAP 실기의 성능과 안전한 업데이트·복구는 아직 실기에서 시험하지 않았다. [ARM 영상 계측](../Codex-post-auth-integration/REGRESSION_TEST_RESULTS.md)

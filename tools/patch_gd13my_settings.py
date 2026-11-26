@@ -159,11 +159,15 @@ def patch_navigation(stock, compiler, *, native_projection=False):
         library_rva = program.DIRECTORY_ENTRY_IMPORT[0].struct.Name
         if program.DIRECTORY_ENTRY_IMPORT[0].dll.lower() != b'coredll.dll':
             raise ValueError('Unexpected GD13MY system library descriptor')
-        ordinal = 0x80000000 | rom_exports()['GetProcAddressW']
+        exports = rom_exports()
+        ordinal = 0x80000000 | exports['GetProcAddressW']
+        dispatch_slot, = (item.address for item in program.DIRECTORY_ENTRY_IMPORT[0].imports
+                           if item.ordinal == exports['DispatchMessageW'])
         imports += struct.pack('<5I', lookup_rva, 0, 0, library_rva, slot_rva) + bytes(20)
         directory_size = len(imports)
         imports += struct.pack('<4I', ordinal, 0, ordinal, 0)
-        thunks.update(stock_get_module=0x2d030c, stock_load_library=0x2cf114, stock_get_proc_iat=base + slot_rva)
+        thunks.update(stock_get_module=0x2d030c, stock_load_library=0x2cf114,
+                      stock_get_proc_iat=base + slot_rva, stock_dispatch_iat=dispatch_slot)
     with TemporaryDirectory(prefix='gd13my-android-auto-') as directory:
         elf = Path(directory) / 'menu.elf'
         linker = [f'--defsym={symbol}={address:#x}' for symbol, address in thunks.items()]

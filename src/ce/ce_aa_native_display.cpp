@@ -505,7 +505,7 @@ int32_t window_proc(CE_HANDLE window, uint32_t message, uint32_t param, int32_t 
         if (message == wm_cancelmode)
             state->pressed = Button::None;
         // CE may release pointer capture before delivering a button's ordinary up message.
-        if (message == wm_cancelmode || message == wm_capturechanged)
+        if (message == wm_cancelmode || (message == wm_capturechanged && detail))
             reset_touch(state);
         if (message == wm_paint) {
             ValidateRect(window, nullptr);

@@ -8,8 +8,8 @@
 Set-Location F:\i30-gen2-android-auto
 $disk = Join-Path $env:LOCALAPPDATA 'i30-gd13my/codex-auth-map-cache/gd13my-media-v2.img'
 .\tools\run_gd13my_phase78.ps1 -DiskPath $disk `
-    -StockProjectionImage build/aare-integration/verified-alert/gd13my-aare-stock-display.img `
-    -OutputDirectory build/aare-integration/current
+    -StockProjectionImage E:/i30-gd13my-images/opencode-resume-perf/touch/gd13my-aare-stock-display.img `
+    -OutputDirectory E:/i30-gd13my-images/opencode-resume-perf/touch/live
 ```
 
 1. 순정 시작 화면에서 **동의함**을 누른다. 지도가 나타나면 **내비 메뉴(F2) → Android Auto**를 선택한다. 첫 F2가 지도만 전면에 표시하면 내비 메뉴를 한 번 더 누른다. **사용법 보기**에서 안내와 설치 페이지의 공식 다운로드 QR을 확인할 수 있다.
@@ -19,7 +19,7 @@ $disk = Join-Path $env:LOCALAPPDATA 'i30-gd13my/codex-auth-map-cache/gd13my-medi
 
 이미 디버깅이 승인된 실폰이 액세서리 모드에 남아 있고 ADB에서 보이면 `adb shell svc usb setFunctions mtp`로 휴대폰을 일반 USB 모드로 재열거할 수 있다. 이 요청 직후 USB가 전환되므로 ADB 연결이 먼저 끊길 수 있다. 이어 PC의 `adb kill-server`로 USB 핸들을 반환한다. 순정 WinCE가 새 AOA 전환을 요청하며, 필요할 때 창 하단의 **USB 다시 연결**로 가상 포트만 다시 연다. 폰 잠금이나 Android 권한 상태에 따라 일반 USB 재열거 뒤에도 AARE 실행이 보류될 수 있다.
 
-2026년 11월 26일 실폰 재시험에서 AARE가 WinCE의 TLS 경고를 받은 뒤 기존 P12로 전환했고 WinCE에서 지문 일치를 확인했다. 재시험은 TLS 수신 도중 중단됐다. 순정 팝업은 표시됐으며 안내 페이지의 터치 진입, 새 세션의 영상과 재연결은 추가 검증이 필요하다. [실폰 로그 요약](REAL_PHONE_TEST_RESULTS.md)
+2026년 11월 26일 실폰 시험에서 기존 P12로 상호 TLS, `AUTH_COMPLETE`, 서비스 탐색과 800×480 영상 출력을 확인했다. 시험에 사용한 전화는 소프트웨어로 USB를 다시 열거했다. 터치와 물리 케이블 재연결은 별도 검증 대상으로 기록한다. [실폰 로그 요약](REAL_PHONE_TEST_RESULTS.md)
 
 ## 최초 등록 간소화
 

@@ -19,6 +19,26 @@ _start:
     push    {r0-r3, r5, lr}
     mov     r5, sp
     bic     sp, sp, #7
+    adrl    r0, projection_class
+    mov     r1, #0
+    bl      stock_find_window
+    cmp     r0, #0
+    beq     route_map_touch
+    ldr     r1, [sb]
+    cmp     r0, r1
+    bne     route_map_touch
+    @ The stock preprocessor consumes mouse edges addressed to its owned popup.
+    @ Dispatch those messages once through the stock CoreDLL import.
+    adrl    ip, dispatch_delta
+    ldr     r2, [ip]
+    ldr     ip, [ip, r2]
+    mov     r0, sb
+    mov     lr, pc
+    bx      ip
+    mov     r0, #1
+    cmp     r0, #0
+    b       touch_done
+route_map_touch:
     adrl    r0, native_module        @ Do not load a module from the normal input path.
     bl      stock_get_module
     cmp     r0, #0
@@ -188,9 +208,13 @@ native_entry:
     .string16 "I30ToggleProjection"
 native_touch_entry:
     .string16 "I30RouteProjectionTouch"
+projection_class:
+    .string16 "I30.GD13MY.NavigationProjection.1"
     .balign 4
 get_proc_delta:
     .word stock_get_proc_iat - get_proc_delta
+dispatch_delta:
+    .word stock_dispatch_iat - dispatch_delta
 #else
     .balign 4
 manual_args:
