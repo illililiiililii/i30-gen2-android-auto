@@ -79,7 +79,7 @@ class ProcessSampler:
             raise C.WinError(C.get_last_error())
         return {'cpu_seconds': cpu, 'read_bytes': counters.ReadTransferCount,
                 'write_bytes': counters.WriteTransferCount,
-                'peak_working_set': memory.PeakWorkingSetSize}
+                'working_set': memory.WorkingSetSize, 'peak_working_set': memory.PeakWorkingSetSize}
 
 
 def tail_markers(path, offset, found):
@@ -121,7 +121,11 @@ def main():
     parser.add_argument('--boot-trace', action='store_true')
     parser.add_argument('--no-auto-calibrate', action='store_true')
     parser.add_argument('--save-output', action='store_true', help='Keep the emulator JSON and logs')
+    parser.add_argument('--sustain', action='store_true',
+                        help='Record 10-second windows at ready and at 1, 3 and 5 minutes')
     args = parser.parse_args()
+    if args.sustain:
+        args.stop_after_ready = max(args.stop_after_ready, 305)
     route_input = []
     if args.route_input is not None:
         try:
@@ -159,7 +163,8 @@ def main():
             'state_path': state, 'usb_on_test': False, 'projection': None,
             'auto_calibrate': not args.no_auto_calibrate, 'boot_trace': args.boot_trace,
             'show_map_preview': False, 'host_utc_offset': args.host_utc_offset,
-            'boot_clock_units': boot_clock_units, 'usb_clock_units': usb_clock_units},
+            'boot_clock_units': boot_clock_units, 'usb_clock_units': usb_clock_units,
+            'sample_performance': args.sustain},
         daemon=True)
     started = monotonic()
     sampler = ProcessSampler()
@@ -174,6 +179,10 @@ def main():
     longest_lcd_gap = 0.0
     stop_reason = None
     shutdown_at = None
+    samples = []
+    checkpoints = iter((10, 60, 180, 300))
+    checkpoint = next(checkpoints)
+    sustained = []
     thread.start()
     while True:
         try:
@@ -187,6 +196,23 @@ def main():
                 stop_reason = f'{kind}:{payload}'
             elif kind == 'navigation_ready' and ready_at is None:
                 ready_at = now
+            elif kind == 'performance' and ready_at is not None and checkpoint is not None:
+                at = now - ready_at
+                samples.append((at, payload | sampler.sample()))
+                while len(samples) > 1 and samples[1][0] <= at - 10:
+                    samples.pop(0)
+                if at >= checkpoint:
+                    first_at, first = samples[0]
+                    last_at, last = samples[-1]
+                    record = {'checkpoint_seconds': checkpoint, 'window_seconds': round(last_at - first_at, 3),
+                              'working_set_mb': round(last['working_set'] / 1048576, 2),
+                              'queued_events': messages.qsize(),
+                              'delta': {k: round(last[k] - first[k], 4)
+                                        for k in last if k not in ('working_set', 'peak_working_set')}}
+                    sustained.append(record)
+                    with output.with_suffix('.sustain.jsonl').open('a', encoding='utf-8') as log:
+                        print(json.dumps(record), file=log)
+                    checkpoint = next(checkpoints, None)
             elif kind == 'frame' and ready_at is not None:
                 lcd_frames += 1
                 if first_lcd_after_ready is None:
@@ -241,6 +267,7 @@ def main():
         'guest_clock_munits_per_wall_second': round(guest_seconds * boot_clock_units / wall / 1e6, 2),
         'timer': report.get('timer'),
         'stock_map': report.get('stock_map'),
+        'sustained_navigation': sustained,
         'lcd_capture': report.get('lcd_capture'),
         'lcd_blits': report.get('lcd_blits'),
         'ready_guest_seconds': round(ready_guest_seconds, 3) if ready_guest_seconds is not None else None,

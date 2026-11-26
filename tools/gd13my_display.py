@@ -142,19 +142,22 @@ class LcdDisplay(ResetBank):
         source = bytes(read_ram(base, span))
         video, _ = self.layout(self.video, contains_ram)
         backdrop = None
-        if video is not None and video[1:3] == (width, height) and self.color_key is not None:
-            backdrop = bytes(read_ram(video[0], video[4]))
+        key = self.color_key
+        key_bytes = None
+        if video is not None and video[1:3] == (width, height) and key is not None:
+            candidate_key = struct.pack('<H', key)
+            if candidate_key in source:
+                backdrop = bytes(read_ram(video[0], video[4]))
+                key_bytes = candidate_key
         scanout = (layout, source, video if backdrop is not None else None, backdrop, self.color_key)
         if scanout == self._last_scanout:
             report, frame = self._last_capture
             return report.copy(), frame
         row_bytes = width * 2
-        if backdrop is None and stride == row_bytes:
+        if stride == row_bytes and backdrop is None:
             packed = source
         else:
             words = struct.Struct(f'<{width}H')
-            key = self.color_key
-            key_bytes = struct.pack('<H', key) if backdrop is not None else None
             key_row = key_bytes * width if key_bytes is not None else None
             rows = []
             for row in range(height):

@@ -174,6 +174,8 @@ class WindowedRun(KernelRun):
         self.next_touch_tick = 0
         self.held_contact = None
         self.last_frame = None
+        self.sample_performance = False
+        self.stock_renderer = None
         self.last_frame_size = None
         self.live_png = live_png
         self.lcd_blit_offset = 0
@@ -375,6 +377,16 @@ class WindowedRun(KernelRun):
                     self.projection.ready.set()
                 self.messages.put(('navigation_ready', None))
             self.messages.put(('heartbeat', (ticks // TIMER_HZ, self.touch.consumed)))
+            if self.sample_performance and self.navigation_ready:
+                self.messages.put(('performance', {
+                    'clock_ticks': ticks, 'block_clock_units': self.clock_units,
+                    'irqs': sum(self.irq_counts.values()), 'timer_irqs': self.irq_counts[37],
+                    'lcd_polls': self.lcd_stats['ready']['polls'],
+                    'lcd_frames': self.lcd_stats['ready']['frames'],
+                    'lcd_capture_seconds': self.lcd_stats['ready']['capture_seconds'],
+                    'map_swaps': self.stock_renderer.ready_swaps if self.stock_renderer else 0,
+                    'map_copy_seconds': self.stock_renderer.map_copy_seconds if self.stock_renderer else 0,
+                }))
             self.flush_serial()
         if self.display.active is not None and now >= self.next_frame_time:
             self.publish_frame()
@@ -497,7 +509,7 @@ def boot(image, disk, seconds, messages, pointer, menu_button, closing, output, 
          software_gl_app, assist_navi_start, assist_touch_calibration, app_volume, usb_port, libusb, panel,
          state_path=None, usb_on_test=False, projection=None, auto_calibrate=False,
          boot_trace=False, show_map_preview=False, host_utc_offset=None, boot_clock_units=None, usb_clock_units=None,
-         live_png=False):
+         live_png=False, sample_performance=False):
     phone_port = None
     try:
         if boot_clock_units is not None:
@@ -536,10 +548,12 @@ def boot(image, disk, seconds, messages, pointer, menu_button, closing, output, 
                                   controls=panel, projection=projection, auto_calibrate=auto_calibrate,
                                   boot_trace=boot_trace, usb_clock_units=usb_clock_units, live_png=live_png)
                 renderer = None
+                run.sample_performance = sample_performance
                 if software_gl_app is not None:
                     from gd13my_software_gl import GuestGL
 
                     renderer = GuestGL(run, software_gl_app, preview=show_map_preview)
+                    run.stock_renderer = renderer
                 try:
                     report = run.run_window(seconds)
                 finally:
