@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import re
 import ssl
+import statistics
 import struct
 import subprocess
 import sys
@@ -24,6 +25,12 @@ RAM = 0x20000000
 MARK = STUB + 0xff0
 STACK = RAM + 0xf000
 FORMAT = Path(__file__).resolve().parent.parent / 'research/evidence/phase1-rom.json'
+
+
+def artifact_video_format(path):
+    """Read the build-time color path from the ABI report; older artifacts use BGRA."""
+    abi = json.loads(path.with_name('abi.json').read_text(encoding='utf-8'))
+    return abi.get(path.name, {}).get('video_format', 'bgra')
 
 
 class Machine:
@@ -76,7 +83,11 @@ class Machine:
         sp = cpu.reg_read(UC_ARM_REG_SP)
         args = [cpu.reg_read(UC_ARM_REG_R0 + i) for i in range(4)] + [
             self.word(sp + i * 4) for i in range(5 if name == 'RegCreateKeyExW' else 3)]
-        result = getattr(self, name)(*args)
+        try:
+            handler = getattr(self, name)
+        except AttributeError:
+            raise AttributeError(f'{type(self).__name__} has no {name}; caller {cpu.reg_read(UC_ARM_REG_LR) - self.base:#x}') from None
+        result = handler(*args)
         if result is not None:
             cpu.reg_write(UC_ARM_REG_R0, result & 0xffffffff)
             cpu.reg_write(UC_ARM_REG_PC, cpu.reg_read(UC_ARM_REG_LR))
@@ -275,6 +286,9 @@ class TlsUsbClient(UsbClient):
     def __init__(self, path, files, context, *, video=None, preempt=False, clock=None, silent=False,
                  video_deadline=False, handshake_reply=None, interleave_control=False):
         super().__init__(path, 'version')
+        self.rgb565 = artifact_video_format(path) == 'rgb565'
+        self.rejected_rgb565 = False
+        self.blit_times = []
         self.files = files
         self.positions = {}
         self.inbox, self.outbox = ssl.MemoryBIO(), ssl.MemoryBIO()
@@ -483,6 +497,32 @@ class TlsUsbClient(UsbClient):
         assert self.text(name) == 'I30.GD13MY.VideoSurface.1'
         return 0x9000 if self.video else 0
 
+    def GetWindow(self, window, command, *_):
+        assert window == 0x9000 and command in (2, 4)
+        return 0x9001
+
+    def IsWindowVisible(self, window, *_):
+        assert window in (0x9000, 0x9001)
+        return 1
+
+    def GetWindowLongW(self, window, index, *_):
+        assert window in (0x9000, 0x9001) and index == 0xffffffec
+        return 0
+
+    def GetClientRect(self, window, rect, *_):
+        assert window == 0x9000
+        self.cpu.mem_write(rect, struct.pack('<iiii', 0, 0, 800, 480))
+        return 1
+
+    def GetDCEx(self, window, region, options, *_):
+        assert (window, region, options) == (0x9000, 0, 0x12)
+        return 11
+
+    def GetClipBox(self, dc, rect, *_):
+        assert dc == 11
+        self.cpu.mem_write(rect, struct.pack('<iiii', 0, 0, 800, 480))
+        return 2
+
     def GetForegroundWindow(self, *_):
         return self.owner
 
@@ -498,9 +538,27 @@ class TlsUsbClient(UsbClient):
         assert (dc, x, y, width) == (11, 0, 0, 800)
         sp = self.cpu.reg_read(UC_ARM_REG_SP)
         _, _, _, _, _, bits, bitmap = struct.unpack('<7I', self.cpu.mem_read(sp, 28))
-        assert struct.unpack('<IiiHH', self.cpu.mem_read(bitmap, 16)) == (40, 800, -480, 1, 32)
-        blue, green, red, _ = self.cpu.mem_read(bits + 4 * (400 + 240 * 800), 4)
-        self.check_pixel(red, green, blue)
+        header = struct.unpack('<IiiHH', self.cpu.mem_read(bitmap, 16))
+        expected_bits = 16 if self.rgb565 and not self.rejected_rgb565 else 32
+        assert header == (40, 800, -480, 1, expected_bits)
+        if header[4] == 16 and getattr(self, 'reject_rgb565', False) and not self.rejected_rgb565:
+            self.rejected_rgb565 = True
+            self.debug.append('fixture rejected 16-bit DIB once')
+            return 0
+        offset = 2 * (400 + 240 * 800) if header[4] == 16 else 4 * (400 + 240 * 800)
+        began = monotonic()
+        try:
+            if header[4] == 16:
+                masks = struct.unpack('<3I', self.cpu.mem_read(bitmap + 40, 12))
+                assert masks == (0xf800, 0x07e0, 0x001f)
+                pixel, = struct.unpack('<H', self.cpu.mem_read(bits + offset, 2))
+                red, green, blue = ((pixel >> 11) & 31, (pixel >> 5) & 63, pixel & 31)
+                self.check_pixel(red * 255 // 31, green * 255 // 63, blue * 255 // 31)
+            else:
+                blue, green, red, _ = self.cpu.mem_read(bits + offset, 4)
+                self.check_pixel(red, green, blue)
+        finally:
+            self.blit_times.append(monotonic() - began)
         self.projected += 1
         return 1
 
@@ -849,7 +907,7 @@ def replace_test_validity(cert, start, end):
     return sequence(sequence(tbs) + cert[tbs_end:])
 
 
-def test_tls(path, openssl, exercise_projection=False):
+def test_tls(path, openssl, exercise_projection=False, reject_rgb565=False):
     sys.path.insert(0, str(FORMAT.parents[2] / 'src'))
     from i30_receiver.mock import test_identity
 
@@ -1060,6 +1118,14 @@ def test_tls(path, openssl, exercise_projection=False):
                 assert projected.focus_history == ([(1, 0), (2, 1), (1, 1)] if preempt else [(1, 0)])
                 assert 'i30 CE projection frame presented.' in result['debug']
                 report[mode] = result['debug'][2:]
+            if reject_rgb565:
+                assert artifact_video_format(path) == 'rgb565', 'fallback fixture requires an RGB565 build'
+                fallback = TlsUsbClient(path, files, context, video=sample)
+                fallback.reject_rgb565 = True
+                result = fallback.attach()
+                assert fallback.rejected_rgb565 and fallback.projected == 1 and not fallback.allocations, result
+                assert 'i30 CE GDI rejected 16-bit DIB; using BGRA fallback.' in result['debug'], result
+                report['rgb565_fallback'] = '16-bit DIB rejection recovered with the validated BGRA blit'
             report['stock_audio'] = 'projection audio focus denied; video remained active'
         return report
 
@@ -1512,7 +1578,9 @@ def test_stress(path, openssl, rounds):
 def arm_video_profile(guest, path):
     abi = json.loads(path.with_name('abi.json').read_text(encoding='utf-8'))[path.name]
     assert sha256(path.read_bytes()).hexdigest() == abi['sha256']
-    labels = {'h264bsdDecode': 'decode', 'h264bsdNextOutputPictureBGRA': 'bgra_conversion'}
+    labels = {'h264bsdDecode': 'decode', 'h264bsdNextOutputPictureBGRA': 'bgra_conversion',
+              'h264bsdConvertToBGRA': 'fallback_bgra_conversion',
+              'i30_yuv420_to_rgb565': 'rgb565_conversion', 'i30_video_push': 'video_push'}
     started = {}
     returns = {}
     per_frame = []
@@ -1524,7 +1592,7 @@ def arm_video_profile(guest, path):
             return
         label, began = entry
         while len(per_frame) <= guest.video_acks:
-            per_frame.append({'decode_ms': 0.0, 'bgra_conversion_ms': 0.0})
+            per_frame.append({name + '_ms': 0.0 for name in labels.values()})
         per_frame[guest.video_acks][label + '_ms'] += 1000 * (monotonic() - began)
 
     def begin(driver, _address, _size, label):
@@ -1535,7 +1603,10 @@ def arm_video_profile(guest, path):
         started[address] = label, monotonic()
 
     for name, label in labels.items():
-        address = guest.base + abi['video_profile_rvas'][name]
+        rva = abi['video_profile_rvas'].get(name)
+        if rva is None:  # The other color path is removed by --gc-sections.
+            continue
+        address = guest.base + rva
         cpu.hook_add(UC_HOOK_CODE, begin, label, begin=address, end=address)
     return per_frame
 
@@ -1573,7 +1644,8 @@ def test_continuous(path, openssl, seconds, fps, progress, motion, profile):
         assert guest.projected == guest.video_acks == len(frames) and not guest.allocations, result
         assert [event[:3] for event in guest.touch_reports] == list(guest.gesture), result
         if profile:
-            assert len(counters) == len(frames) and all(frame['decode_ms'] and frame['bgra_conversion_ms']
+            conversion = 'rgb565_conversion_ms' if guest.rgb565 else 'bgra_conversion_ms'
+            assert len(counters) == len(frames) and all(frame['decode_ms'] and frame[conversion]
                                                        for frame in counters)
         return {'nominal_stream_seconds': seconds, 'nominal_fps': fps, 'simulated_video_ms': guest.ms - guest.started_video,
                 'sent': len(frames), 'acked': guest.video_acks, 'painted': guest.projected,
@@ -1582,7 +1654,10 @@ def test_continuous(path, openssl, seconds, fps, progress, motion, profile):
                 'center_pixel_colors': len(guest.pixel_samples),
                 'peak_guest_requested_bytes': guest.peak_bytes, 'live_allocations_after_close': len(guest.allocations),
                 'wall_seconds': round(wall, 3), 'host_cpu_seconds': round(cpu, 3),
-                'frame_ack_wall_ms': guest.frame_times, 'arm_function_wall_profile': counters}
+                'frame_ack_wall_ms': guest.frame_times, 'arm_function_wall_profile': counters,
+                'gdi_blit_wall_ms': [1000 * value for value in guest.blit_times],
+                'median_gdi_blit_ms': round(1000 * statistics.median(guest.blit_times), 3),
+                'video_format': 'rgb565' if guest.rgb565 else 'bgra'}
 
 
 def test_stock_touch_route(path):
@@ -1690,6 +1765,8 @@ def main():
     parser.add_argument('--motion-pattern', action='store_true', help='Use a higher-motion libavfilter source')
     parser.add_argument('--profile-video', action='store_true', help='Time decoder and BGRA functions in the ARM fixture')
     parser.add_argument('--navigation', type=Path, help='Exercise the stock input trampoline in a patched GDdNavi.exe')
+    parser.add_argument('--reject-rgb565', action='store_true',
+                        help='Reject one 16-bit DIB to verify the BGRA fallback (RGB565 builds only)')
     args = parser.parse_args()
     if not args.tls_openssl and (args.stress_rounds or args.continuous_seconds):
         parser.error('ARM stress and continuous video require --tls-openssl')
@@ -1735,7 +1812,8 @@ def main():
     report = {'method': 'Relocated ARM PE with WinCE USB and coredll API doubles',
               'client': client, 'settings': settings, 'preferences': preferences, 'projection_owner': owners}
     if args.tls_openssl:
-        report['native_tls'] = test_tls(args.artifacts / 'i30usb.dll', args.tls_openssl, args.projection)
+        report['native_tls'] = test_tls(args.artifacts / 'i30usb.dll', args.tls_openssl, args.projection,
+                                        args.reject_rgb565)
     if args.stress_rounds:
         report['native_stress'] = test_stress(args.artifacts / 'i30usb.dll', args.tls_openssl, args.stress_rounds)
     if args.continuous_seconds:

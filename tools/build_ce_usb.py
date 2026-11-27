@@ -131,7 +131,8 @@ def build_bearssl(compiler, source, work, options, run_tool):
                          (f'-I{source / "inc"}', f'-I{source / "src"}', *platform), run_tool)
 
 
-def build(compiler, output, bearssl_source=None, h264_source=None, virtual_lcd_bench=False):
+def build(compiler, output, bearssl_source=None, h264_source=None, virtual_lcd_bench=False,
+          video_format='bgra'):
     source = ROOT / 'src/ce'
     exports = rom_exports()
     options = ('-march=armv4t', '-marm', '-Os', '-Wall', '-Wextra', '-Werror', '-ffreestanding', '-fshort-wchar',
@@ -179,6 +180,8 @@ def build(compiler, output, bearssl_source=None, h264_source=None, virtual_lcd_b
                 if video:
                     units.extend(('-DI30_NATIVE_VIDEO', f'-I{h264_source / "src"}', source / 'ce_aa_video.c',
                                   source / 'ce_aa_projection.c', decoder))
+                    if video_format == 'rgb565':
+                        units.append('-DI30_VIDEO_RGB565')
                     if virtual_lcd_bench:
                         units.append('-DI30_VIRTUAL_LCD_BENCH')
                 units.extend((tls_library, '-lc', '-lgcc'))
@@ -195,7 +198,9 @@ def build(compiler, output, bearssl_source=None, h264_source=None, virtual_lcd_b
             exe.write_bytes(image)
             report[target] = inspect(exe, exports)
             if video:
-                sample_symbols = {'h264bsdDecode', 'h264bsdNextOutputPictureBGRA'}
+                report[target]['video_format'] = video_format
+                sample_symbols = {'h264bsdDecode', 'h264bsdNextOutputPictureBGRA',
+                                  'h264bsdConvertToBGRA', 'i30_yuv420_to_rgb565', 'i30_video_push'}
                 with elf.open('rb') as linked:
                     symbols = ELFFile(linked).get_section_by_name('.symtab')
                     report[target]['video_profile_rvas'] = {
@@ -232,6 +237,8 @@ def main():
     parser.add_argument('--bearssl-source', type=Path, help='Include the native TLS stage from an extracted BearSSL release')
     parser.add_argument('--h264-source', type=Path, help='Include the guest video channel and decoder for an authorized surface')
     parser.add_argument('--virtual-lcd-bench', action='store_true', help='Use the LCD in an isolated virtual-phone test image')
+    parser.add_argument('--video-format', choices=('bgra', 'rgb565'), default='bgra',
+                        help='Select the WinCE DIB color path; BGRA remains the validated fallback')
     parser.add_argument('output', type=Path)
     args = parser.parse_args()
     if args.h264_source and (not args.bearssl_source or not (args.h264_source / 'src/h264bsd_decoder.h').is_file() or
@@ -241,7 +248,8 @@ def main():
         parser.error('--virtual-lcd-bench requires --h264-source')
     report = build(args.compiler.resolve(strict=True), args.output,
                    args.bearssl_source.resolve(strict=True) if args.bearssl_source else None,
-                   args.h264_source.resolve(strict=True) if args.h264_source else None, args.virtual_lcd_bench)
+                   args.h264_source.resolve(strict=True) if args.h264_source else None, args.virtual_lcd_bench,
+                   args.video_format)
     print(json.dumps(report, indent=2))
 
 
