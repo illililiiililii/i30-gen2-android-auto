@@ -139,7 +139,15 @@ def main():
                             *sorted(headers.glob('*.c')), '-lc', '-lgcc'], check=True, cwd=staging, timeout=90)
             probe = output / 'i30video.exe'
             probe.write_bytes(pe_image(*native_sections(elf), api=api))
-            (output / 'abi.json').write_text(json.dumps(inspect(probe, exports), indent=2) + '\n', encoding='utf-8')
+            abi = inspect(probe, exports)
+            names = {'i30_video_push', 'stage_uyvy', 'h264bsdConvertToBGRA'}
+            with elf.open('rb') as stream:
+                abi['video_probe_rvas'] = {
+                    symbol.name: symbol['st_value'] - IMAGE_BASE
+                    for symbol in ELFFile(stream).get_section_by_name('.symtab').iter_symbols()
+                    if symbol.name in names
+                }
+            (output / 'abi.json').write_text(json.dumps(abi, indent=2) + '\n', encoding='utf-8')
             shutil.copyfile(decoder / 'LICENSE.md', output / 'h264bsd-LICENSE.md')
             print(probe)
         return

@@ -1,5 +1,7 @@
 # VID1/DSP1 IOCTL ABI 상태
 
+실제 탑재 이미지의 판정과 순정 버전 응답 수집 절차는 [DSP 펌웨어 판별](GD13MY_DSP_PAYLOAD.md)에 있다.
+
 GD13MY .061 APP의 `002c98d9_LibMMCodec.dll`과 ROM의 `videodev.dll`에서 PE 가상 주소 기준으로 확인했다. 아래 수치는 정적 호출 근거다.
 
 | 명령 | 순정 송신 및 드라이버 분기 | 확인한 계약 |

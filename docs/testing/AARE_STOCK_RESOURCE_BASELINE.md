@@ -52,7 +52,31 @@ ARM fixture에서 800×480, crop된 798×478, 행 및 끝 패딩 보존, 출력 
 & $py tools/verify_ce_uyvy_staging.py build/gd13my-ce-uyvy-staging/i30video.exe
 ```
 
+### HAL과 ARM 성능 대조
+
+- .061 ROM의 `DDRAW.dll`는 `DirectDrawCreate` ordinal 1을 제공한다. `ddi.dll!HALInit` RVA `0x1116c`의 콜백 초기화는 VA `0xc090f338`을 호출하고, `0xc090f410`에서 HAL 정보에 RVA `0x3e91c` 주소를 채운다. 이 목록의 세 항목은 순서대로 YUY2, YUYV, UYVY다. 별도 내부 표의 I420/YV12는 이 HAL 목록에 들어 있지 않다. 이 목록과 순정 720×576 생성 경로로부터 800×480의 표면 수용을 확정할 수 없다. [DirectDraw HAL 정보](https://learn.microsoft.com/en-us/previous-versions/windows/embedded/ms897605%28v%3Dmsdn.10%29)
+- `LibVideo!0x102d40`의 다음 화면 처리 함수는 `0x102d60`에서 표면 콜백을 실행하고, 실패 분기에서 primary와 overlay를 복원한 뒤 `UpdateOverlay`를 다시 시도한다. `0x102e44`의 Lock 및 `0x102e9c`의 Unlock, 순정 후방카메라 표시 이벤트와의 독립적인 오버레이 반환 순서까지 함께 검증해야 한다. 기존 RGB565 DISPC 캡처는 UYVY 표면의 실제 색 변환과 Flip 완료를 재현할 수 없다. 수신기에서 해당 하드웨어 경로를 활성화하지 않았다. [Windows CE 표면 상태와 Flip](https://learn.microsoft.com/hr-hr/previous-versions/windows/embedded/ms936859%28v%3Dmsdn.10%29)
+
+동일한 800×480 Baseline H.264 프레임을 같은 ARM Unicorn 조건에서 세 가지 모드로 교차 실행했다. 각 모드 5회 중앙값이며 호스트 벽시계다. `StretchDIBits`는 인자·픽셀이 확인되는 시험 대역으로 실제 LCD 화면 전송 비용은 포함하지 않는다.
+
+| ARM fixture | 변환/패킹 | 전체 video push | 할당 횟수 / 피크 요청 바이트 |
+|---|---:|---:|---:|
+| 기본 BGRA | 263.62 ms | 504.58 ms | 14 / 5,122,662 |
+| UYVY 메모리 | 55.19 ms | 292.90 ms | 14 / 4,370,022 |
+| UYVY 버퍼 거부 → BGRA | 거부 0.03 ms, BGRA 287.95 ms | 543.69 ms | 14 / 5,122,662 |
+
+14회는 입력·디코더·출력 초기화와 1프레임을 합친 할당이다. 모든 반복에서 종료 시 잔존 할당은 0이다. UYVY의 쓰기량은 프레임당 768,000바이트, BGRA의 쓰기량은 1,536,000바이트다. 스테이징의 피치 패딩 15,360바이트는 쓰지 않았다. 실제 오버레이 전송·복사량, 표시 FPS, 누락률 및 ACK 간격의 개선은 미검증이다. 이 벤치는 USB ACK를 발생시키지 않는다. UYVY 버퍼 거부의 직접 측정 비용과 실행 간 전체 시간 편차는 따로 표기했다. 기존 수신기의 USB/TLS·재연결·카메라 선점·순정 터치 ARM fixture도 통과했다. 전체 Python 회귀는 97개 통과, GPTimer 환경 조건 1개 건너뜀이다.
+
+```powershell
+& $py tools/build_ce_minimal.py --compiler $cc --h264-source build/ce-video-dependency/h264bsd
+& $py tools/build_ce_minimal.py --compiler $cc --h264-source build/ce-video-dependency/h264bsd --uyvy-staging
+& $py tools/verify_ce_uyvy_staging.py build/gd13my-ce-uyvy-staging/i30video.exe `
+    --compare-bgra build/gd13my-ce-video/i30video.exe
+```
+
 ## DSP 디코딩
+
+실제 내장 이미지와 지원 판정은 [DSP 펌웨어 판별](../hardware/hardware-acceleration/GD13MY_DSP_PAYLOAD.md)에 있다.
 
 상위 순정 재생은 내부 스트림 값 9, 6, 17에서 H.264/H.263 미지원 분기로 간다. 하위 `videodev.dll`에는 타입 6에 대응하는 별도 H.264 디코더 메모리 query/init 분기가 존재한다. DECINIT/DECODE 호출 크기와 출력 상태는 정적으로 대조했다. 펌웨어에서의 실제 디코딩 성공, 데이터·DMA 계약, SPS/PPS/IDR 재동기화와 폴백을 검증해야 하므로 기존 h264bsd/BGRA/GDI가 계속 사용된다. [DSP 호출과 분기](../hardware/hardware-acceleration/DSP_IOCTL_ABI.md)
 
