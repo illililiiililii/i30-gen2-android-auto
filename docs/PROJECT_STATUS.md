@@ -13,7 +13,7 @@ v8 게스트 자동 실행은 `b912009`에서 추가됐다. 실폰 USB 시험의
 | 회귀시험 | Python 97개 통과, 환경 조건 1개 건너뜀. ARM USB/TLS/투사 fixture 통과 | [실폰 재연결 시험](testing/AARE_PHYSICAL_USB_RECOVERY.md) |
 | GPU | WGL 선택 경로; readback 때문에 GDI 기본 유지 | [실지도 벤치](hardware/hardware-acceleration/REAL_MAP_BENCHMARK.md) |
 | GPTimer | 전체 guest 처리량 +7.7%, 지도 구간 +0.9%; 체감 개선 미입증 | [실지도 벤치](hardware/hardware-acceleration/REAL_MAP_BENCHMARK.md) |
-| 순정 지도 리소스 | 지도와 투사 창은 기존 구조에서 같은 프로세스에 의존한다. 가상폰 12프레임 동안 지도 swap/복사 0회, GPS 재설정 로그 지속, 분리 후 순정 메뉴 응답 확인 | [A 기준 측정](testing/AARE_STOCK_RESOURCE_BASELINE.md) |
+| 순정 지도 리소스 | 지도와 투사 창은 기존 구조에서 같은 프로세스에 의존한다. 가상폰 투사 구간 지도 swap/복사 0~6회, GPS 재설정 로그 지속, 분리 후 순정 메뉴 응답 확인 | [A 기준 측정](testing/AARE_STOCK_RESOURCE_BASELINE.md) |
 | 순정 영상 출력 | 순정 UYVY 오버레이 포맷 확인, 실제 800×480 표면과 점유 계약 미검증 | [영상 출력](testing/AARE_STOCK_RESOURCE_BASELINE.md#순정-영상-출력) |
 | DSP | DECINIT·DECODE의 556B 입력과 4B 상태, 상위 H.264/H.263 거부 분기와 드라이버 내부 H.264 디코더 분기 확인. 하드웨어 디코딩 미검증 | [DSP ABI](hardware/hardware-acceleration/DSP_IOCTL_ABI.md) |
 | 영상 파이프라인 | 8단계 인벤토리 정리(USB-TLS-AAP-H264-색변환-복사-출력), BGRA 변환 병목 식별 | [파이프라인](android-auto/aare/VIDEO_PIPELINE_INVENTORY.md) |
