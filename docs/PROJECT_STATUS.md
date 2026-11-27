@@ -15,6 +15,7 @@
 | GPTimer | 전체 guest 처리량 +7.7%, 지도 구간 +0.9%; 체감 개선 미입증 | [실지도 벤치](hardware/hardware-acceleration/REAL_MAP_BENCHMARK.md) |
 | DSP | VID1/DSP1 IOCTL 코드(0x00220808 등 22개), 556B 입력 버퍼 확인, 상세 ABI 미입증; h264bsd 유지 | [DSP 증거](hardware/hardware-acceleration/DSP_INTERFACE_EVIDENCE.md) |
 | 영상 파이프라인 | 8단계 인벤토리 정리(USB-TLS-AAP-H264-색변환-복사-출력), BGRA 변환 병목 식별 | [파이프라인](android-auto/aare/VIDEO_PIPELINE_INVENTORY.md) |
+| H.264 디코더 최적화 | ARM fixture에서 fast-copy 후보 반복 개선 확인, 실기 미검증으로 opt-in 유지; codegen/NEON 기본값 변경 없음 | [최적화 결과](android-auto/aare/H264_OPTIMIZATION_RESULTS.md) |
 | 자동 연결 | v8 가상/에뮬레이터 독립 옵션·동시 활성화·첫 프레임·분리 복귀 PASS, 실폰 미검증 | [자동 실행 검증](testing/AARE_AUTOSTART_VALIDATION.md) |
 | 티맵 분할 | VideoConfiguration/Insets(미제공) 대조 완료, 800x480 DPI 및 UI Insets 영향 분석 | [티맵 증거](android-auto/aare/TMAP_DISPLAY_EVIDENCE.md) |
 | 실차 ±5% | 실측 기준 없음 | [가속 인계](hardware/hardware-acceleration/FINAL_HANDOFF.md) |

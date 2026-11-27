@@ -7,6 +7,7 @@ from hashlib import sha256
 import json
 import os
 from pathlib import Path
+import shutil
 import struct
 import subprocess
 from tempfile import TemporaryDirectory
@@ -46,6 +47,20 @@ NATIVE_API = (*SESSION_API, 'GetProcessHeap', 'HeapAlloc', 'HeapFree', 'CreateTh
 DRIVER = 'i30usb.dll'
 NAVIGATION_MODULE = 'i30nav.dll'
 
+# Experimental code generation presets. The baseline preserves the existing
+# ARMv4T/ARM/-Os guest modules and the decoder's decoder-specific -O2 override.
+CODEGEN_FLAGS = {
+    'armv4t-os': (('-march=armv4t', '-marm', '-Os'), ('-O2',)),
+    'armv4t-o2': (('-march=armv4t', '-marm', '-O2'), ()),
+    'armv4t-o3': (('-march=armv4t', '-marm', '-O3'), ()),
+    'cortex-a8-o2': (('-mcpu=cortex-a8', '-marm', '-mword-relocations', '-O2'), ()),
+    'cortex-a8-o3': (('-mcpu=cortex-a8', '-marm', '-mword-relocations', '-O3'), ()),
+    # Experimental only: WinCE/Unicorn execution of NEON is not validated as a
+    # deployment target. softfp keeps the existing integer-only calling ABI.
+    'cortex-a8-neon-o3': (('-mcpu=cortex-a8', '-marm', '-mfpu=neon', '-mfloat-abi=softfp',
+                           '-mword-relocations', '-O3'), ()),
+}
+
 
 def export_directory(rva, target, entries):
     module = target.encode('ascii') + b'\0'
@@ -79,17 +94,28 @@ def dll_sections(path, sections, target, names):
             data = relocated.data()
             for reloc in section.iter_relocations():
                 kind = reloc['r_info_type']
-                if kind in (1, 3, 28, 29, 40, 42):
-                    continue  # PC-relative calls, jumps and ARMv4T branch metadata.
-                if kind != 2:
+                if kind in (1, 3, 10, 28, 29, 30, 40, 42, 44, 47, 48):
+                    continue  # PC-relative branches; Thumb MOVW/MOVT is not used by these -marm builds.
+                if kind not in (2, 43):
                     raise ValueError(f'Unrecognized ARM relocation {kind}')
                 va = reloc['r_offset']
-                addend, = struct.unpack_from('<I', data, va - relocated['sh_addr'])
-                if not any(start <= addend - IMAGE_BASE < start + len(content)
+                offset = va - relocated['sh_addr']
+                if kind == 2:
+                    addend, = struct.unpack_from('<I', data, offset)
+                else:  # R_ARM_MOVW_ABS_NC; R_ARM_MOVT_ABS is skipped as its high half.
+                    low, high = struct.unpack_from('<II', data, offset)
+                    addend = ((((high >> 4) & 0xf000) | (high & 0xfff)) << 16) | \
+                        ((low >> 4) & 0xf000) | (low & 0xfff)
+                # Linkers may place a zero-length marker at the end of a section.
+                if not any(start <= addend - IMAGE_BASE <= start + len(content)
                            for _, start, content in sections):
-                    raise ValueError(f'Absolute relocation target outside the PE image: {addend:#x}')
+                    symbol = symbols.get_symbol(reloc['r_info_sym']).name
+                    layout = [(name, hex(start), hex(len(content))) for name, start, content in sections]
+                    raise ValueError(f'Absolute relocation target outside the PE image: {addend:#x} '
+                                     f'({relocated.name} at {va:#x}, symbol {symbol}, sections {layout})')
                 rva = va - IMAGE_BASE
-                pages[rva & -PAGE].append(0x3000 | (rva % PAGE))
+                base_type = 0x3000 if kind == 2 else 0x5000
+                pages[rva & -PAGE].append(base_type | (rva % PAGE))
     if not pages:
         raise ValueError(f'{target} has no base relocations')
     reloc_bytes = bytearray()
@@ -101,6 +127,35 @@ def dll_sections(path, sections, target, names):
     start = max(align(rva + len(data), PAGE) for _, rva, data in sections)
     exported = export_directory(start, target, entries)
     return [*sections, ('.edata', start, exported), ('.reloc', align(start + len(exported), PAGE), reloc_bytes)]
+
+
+FAST_COPY_CALL = '    memcpy(fill, ref, center);\n'
+FAST_COPY_BODY = '''    if (center >= 4 && !((u32)ref & 3) && !((u32)fill & 3))
+    {
+        u32 words = (u32)center >> 2;
+        while (words--)
+        {
+            *(u32*)fill = *(const u32*)ref;
+            fill += 4;
+            ref += 4;
+        }
+        center &= 3;
+    }
+    while (center--)
+        *fill++ = *ref++;
+'''
+
+
+def prepare_h264_fast_copy(source, work):
+    """Copy the h264bsd source tree and specialize only FillRow1's memcpy."""
+    root = work / 'h264_fast_source'
+    shutil.copytree(source, root)
+    target = root / 'h264bsd_reconstruct.c'
+    text = target.read_text(encoding='utf-8')
+    if text.count(FAST_COPY_CALL) != 1:
+        raise ValueError('Unexpected h264bsd FillRow1 source; fast-copy patch not applied')
+    target.write_text(text.replace(FAST_COPY_CALL, FAST_COPY_BODY), encoding='utf-8')
+    return root
 
 
 def build_library(compiler, source, work, options, name, extra, run_tool):
@@ -132,12 +187,20 @@ def build_bearssl(compiler, source, work, options, run_tool):
 
 
 def build(compiler, output, bearssl_source=None, h264_source=None, virtual_lcd_bench=False,
-          video_format='bgra'):
+          video_format='bgra', codegen='armv4t-os', h264_profile=False, h264_fast_copy=False):
     source = ROOT / 'src/ce'
     exports = rom_exports()
-    options = ('-march=armv4t', '-marm', '-Os', '-Wall', '-Wextra', '-Werror', '-ffreestanding', '-fshort-wchar',
+    target_flags, decoder_flags = CODEGEN_FLAGS[codegen]
+    options = (*target_flags, '-Wall', '-Wextra', '-Werror', '-ffreestanding', '-fshort-wchar',
                '-fno-stack-protector', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '-nostdlib', '-static')
     report, artifacts = {}, {}
+    if codegen.startswith('cortex-a8'):
+        install = compiler.parent.parent
+        libc, = install.glob('arm-none-eabi/lib/arm/v5te/softfp/libc.a')
+        libgcc, = install.glob('lib/gcc/arm-none-eabi/*/arm/v5te/softfp/libgcc.a')
+        link_libs = (libc, libgcc)
+    else:
+        link_libs = ('-lc', '-lgcc')
     output.parent.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(dir=output.parent.resolve(), prefix='i30-ce-usb-') as directory:
         work = Path(directory)
@@ -149,8 +212,10 @@ def build(compiler, output, bearssl_source=None, h264_source=None, virtual_lcd_b
         tls_library = build_bearssl(compiler, bearssl_source, work, options, run_tool) if bearssl_source is not None else None
         decoder = None
         if h264_source is not None:
-            decoder = build_library(compiler, h264_source / 'src', work, options, 'h264',
-                                    (f'-I{h264_source / "src"}', '-O2'), run_tool)
+            decoder_source = prepare_h264_fast_copy(h264_source / 'src', work) if h264_fast_copy else h264_source / 'src'
+            decoder_flags_extra = ('-finstrument-functions',) if h264_profile else ()
+            decoder = build_library(compiler, decoder_source, work, options, 'h264',
+                                    (f'-I{decoder_source}', *decoder_flags, *decoder_flags_extra), run_tool)
         for target, unit, api, is_dll in (
                 (DRIVER, 'ce_aa_usb_client.c', DRIVER_API, True),
                 ('i30aa.exe', 'ce_aa_usb_settings.c', SETTINGS_API, False),
@@ -172,7 +237,7 @@ def build(compiler, output, bearssl_source=None, h264_source=None, virtual_lcd_b
                 if target == NAVIGATION_MODULE:
                     native = work / 'navigation.o'
                     run_tool([compiler, *options, '-fno-exceptions', '-fno-rtti', '-c', source / unit, '-o', native])
-                    units.extend((native, '-lc'))
+                    units.extend((native, *link_libs[:1]))
                 else:
                     units.append(source / unit)
             if tls:
@@ -180,14 +245,22 @@ def build(compiler, output, bearssl_source=None, h264_source=None, virtual_lcd_b
                 if video:
                     units.extend(('-DI30_NATIVE_VIDEO', f'-I{h264_source / "src"}', source / 'ce_aa_video.c',
                                   source / 'ce_aa_projection.c', decoder))
+                    if h264_profile:
+                        units.append(source / 'ce_aa_profile.c')
                     if video_format == 'rgb565':
                         units.append('-DI30_VIDEO_RGB565')
                     if virtual_lcd_bench:
                         units.append('-DI30_VIRTUAL_LCD_BENCH')
-                units.extend((tls_library, '-lc', '-lgcc'))
+                units.extend((tls_library, *link_libs))
             linker = f'-Wl,--emit-relocs,-T,{source / "ce_minimal.ld"}'
             keep_usb_entry = ('-Wl,--gc-sections,-u,USBDeviceAttach',) if video else ()
-            run_tool([compiler, *options, linker, *keep_usb_entry, '-o', elf, *units])
+            link_dirs = ()
+            if codegen.startswith('cortex-a8'):
+                install = compiler.parent.parent
+                candidates = (*install.glob('lib/gcc/arm-none-eabi/*/arm/v5te'),
+                              install / 'arm-none-eabi/lib/arm/v5te')
+                link_dirs = tuple(f'-L{path}' for path in candidates if path.is_dir())
+            run_tool([compiler, *options, *link_dirs, linker, *keep_usb_entry, '-o', elf, *units])
             sections, entry, directory_rva, iat = native_sections(elf)
             if is_dll:
                 names = ('USBDeviceAttach',) if target == DRIVER else (
@@ -197,15 +270,28 @@ def build(compiler, output, bearssl_source=None, h264_source=None, virtual_lcd_b
             exe = work / target
             exe.write_bytes(image)
             report[target] = inspect(exe, exports)
+            report[target]['codegen'] = codegen
             if video:
                 report[target]['video_format'] = video_format
+                report[target]['h264_fast_copy'] = h264_fast_copy
                 sample_symbols = {'h264bsdDecode', 'h264bsdNextOutputPictureBGRA',
-                                  'h264bsdConvertToBGRA', 'i30_yuv420_to_rgb565', 'i30_video_push'}
+                                  'h264bsdConvertToBGRA', 'i30_yuv420_to_rgb565', 'i30_video_push',
+                                  '__cyg_profile_func_enter', '__cyg_profile_func_exit'}
                 with elf.open('rb') as linked:
                     symbols = ELFFile(linked).get_section_by_name('.symtab')
+                    entries = list(symbols.iter_symbols())
                     report[target]['video_profile_rvas'] = {
-                        symbol.name: symbol['st_value'] - IMAGE_BASE for symbol in symbols.iter_symbols()
+                        symbol.name: symbol['st_value'] - IMAGE_BASE for symbol in entries
                         if symbol.name in sample_symbols
+                    }
+                    report[target]['video_function_rvas'] = {
+                        symbol.name: symbol['st_value'] - IMAGE_BASE for symbol in entries
+                        if symbol.name and symbol['st_shndx'] != 'SHN_UNDEF'
+                        and symbol.entry['st_info']['type'] == 'STT_FUNC'
+                    }
+                    report[target]['profile_hook_rvas'] = {
+                        symbol.name: symbol['st_value'] - IMAGE_BASE for symbol in entries
+                        if symbol.name in ('__cyg_profile_func_enter', '__cyg_profile_func_exit')
                     }
             if [entry['name'] for entry in report[target]['imports']] != list(api):
                 raise ValueError('Unexpected CE imports')
@@ -239,6 +325,12 @@ def main():
     parser.add_argument('--virtual-lcd-bench', action='store_true', help='Use the LCD in an isolated virtual-phone test image')
     parser.add_argument('--video-format', choices=('bgra', 'rgb565'), default='bgra',
                         help='Select the WinCE DIB color path; BGRA remains the validated fallback')
+    parser.add_argument('--codegen', choices=tuple(CODEGEN_FLAGS), default='armv4t-os',
+                        help='Compiler/architecture preset; non-baseline presets are experimental')
+    parser.add_argument('--h264-profile', action='store_true',
+                        help='Instrument h264bsd with -finstrument-functions for ARM fixture profiling')
+    parser.add_argument('--h264-fast-copy', action='store_true',
+                        help='Opt-in inline aligned memcpy specialization for h264bsd reference rows')
     parser.add_argument('output', type=Path)
     args = parser.parse_args()
     if args.h264_source and (not args.bearssl_source or not (args.h264_source / 'src/h264bsd_decoder.h').is_file() or
@@ -249,7 +341,7 @@ def main():
     report = build(args.compiler.resolve(strict=True), args.output,
                    args.bearssl_source.resolve(strict=True) if args.bearssl_source else None,
                    args.h264_source.resolve(strict=True) if args.h264_source else None, args.virtual_lcd_bench,
-                   args.video_format)
+                   args.video_format, args.codegen, args.h264_profile, args.h264_fast_copy)
     print(json.dumps(report, indent=2))
 
 

@@ -17,7 +17,8 @@ from time import monotonic, process_time, time
 
 import pefile
 from unicorn import UC_ARCH_ARM, UC_HOOK_CODE, UC_MODE_ARM, Uc
-from unicorn.arm_const import UC_ARM_REG_R0, UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_SP
+from unicorn.arm_const import (UC_ARM_REG_R0, UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_SP,
+                               UC_CPU_ARM_CORTEX_A8)
 
 
 STUB = 0x70000000
@@ -42,6 +43,7 @@ class Machine:
         self.base = base if base is not None else self.pe.OPTIONAL_HEADER.ImageBase
         image = self.pe.get_memory_mapped_image(ImageBase=self.base)
         self.cpu = Uc(UC_ARCH_ARM, UC_MODE_ARM)
+        self.cpu.ctl_set_cpu_model(UC_CPU_ARM_CORTEX_A8)
         self.cpu.mem_map(self.base, (len(image) + 0xfff) & ~0xfff)
         self.cpu.mem_write(self.base, image)
         self.cpu.mem_map(STUB, 0x1000)
@@ -100,7 +102,11 @@ class Machine:
                 self.cpu.reg_write(UC_ARM_REG_R0 + i, arg)
             else:
                 self.put(STACK + 4 * (i - 4), arg)
-        self.cpu.emu_start(self.base + rva, MARK, timeout=self.timeout_us, count=self.instruction_limit)
+        try:
+            self.cpu.emu_start(self.base + rva, MARK, timeout=self.timeout_us, count=self.instruction_limit)
+        except Exception as error:
+            raise RuntimeError(f'{error!s} at PC {self.cpu.reg_read(UC_ARM_REG_PC):#x} '
+                               f'(RVA {self.cpu.reg_read(UC_ARM_REG_PC) - self.base:#x})') from error
         if self.cpu.reg_read(UC_ARM_REG_PC) != MARK:
             raise ValueError('ARM test input did not finish')
         return self.cpu.reg_read(UC_ARM_REG_R0)
@@ -1611,7 +1617,49 @@ def arm_video_profile(guest, path):
     return per_frame
 
 
-def test_continuous(path, openssl, seconds, fps, progress, motion, profile):
+def arm_h264_function_profile(guest, path):
+    """Aggregate inclusive wall time from GCC -finstrument-functions hooks.
+
+    Only the two compiler hook stubs are trapped, so this ranks functions with
+    much lower observer overhead than hooking every decoder call. Nested calls
+    are intentionally counted in their parents; exclusive self time is not
+    inferred. The fixture cannot imply real-device cycle or millisecond cost.
+    """
+    abi = json.loads(path.with_name('abi.json').read_text(encoding='utf-8'))[path.name]
+    assert sha256(path.read_bytes()).hexdigest() == abi['sha256']
+    rvas = abi.get('video_function_rvas', {})
+    hooks = abi.get('profile_hook_rvas', {})
+    if not rvas or not all(name in hooks for name in ('__cyg_profile_func_enter', '__cyg_profile_func_exit')):
+        return {}
+    stats = {name: {'calls': 0, 'inclusive_ms': 0.0} for name in rvas}
+    names = {guest.base + rva: name for name, rva in rvas.items()}
+    stack = []
+
+    def enter(driver, _address, _size, _data):
+        name = names.get(driver.reg_read(UC_ARM_REG_R0) & ~1, 'unknown')
+        stack.append((name, monotonic()))
+
+    def leave(driver, _address, _size, _data):
+        now = monotonic()
+        name = names.get(driver.reg_read(UC_ARM_REG_R0) & ~1, 'unknown')
+        index = len(stack) - 1
+        while index >= 0 and stack[index][0] != name:
+            index -= 1
+        if index < 0:
+            return
+        _, began = stack.pop(index)
+        row = stats.setdefault(name, {'calls': 0, 'inclusive_ms': 0.0})
+        row['calls'] += 1
+        row['inclusive_ms'] += 1000 * (now - began)
+
+    for name in ('__cyg_profile_func_enter', '__cyg_profile_func_exit'):
+        callback = enter if name.endswith('enter') else leave
+        guest.cpu.hook_add(UC_HOOK_CODE, callback, begin=guest.base + hooks[name],
+                           end=guest.base + hooks[name])
+    return stats
+
+
+def test_continuous(path, openssl, seconds, fps, progress, motion, profile, internal_profile=False):
     sys.path.insert(0, str(FORMAT.parents[2] / 'src'))
     from i30_receiver.mock import test_identity
 
@@ -1622,9 +1670,11 @@ def test_continuous(path, openssl, seconds, fps, progress, motion, profile):
                  'i30-client.pem': cert.read_bytes(), 'i30-client-key.pem': key.read_bytes()}
         guest = NativeUsbStress(path, files, peer, frames, fps=fps, motion=motion)
         # This is a bounded bench execution budget. Guest time is advanced by the sender cadence.
-        guest.timeout_us = max(60_000_000, len(frames) * 1_200_000)
+        budget = 300_000_000 if internal_profile else 60_000_000
+        guest.timeout_us = max(budget, len(frames) * 1_200_000)
         guest.instruction_limit = 0
         counters = arm_video_profile(guest, path) if profile else []
+        function_stats = arm_h264_function_profile(guest, path) if internal_profile else {}
         wall, cpu = monotonic(), process_time()
         if progress is not None:
             checkpoints = {fps * minutes * 60 for minutes in (1, 5, 15, 30)}
@@ -1647,6 +1697,11 @@ def test_continuous(path, openssl, seconds, fps, progress, motion, profile):
             conversion = 'rgb565_conversion_ms' if guest.rgb565 else 'bgra_conversion_ms'
             assert len(counters) == len(frames) and all(frame['decode_ms'] and frame[conversion]
                                                        for frame in counters)
+        functions = []
+        if internal_profile:
+            assert function_stats and function_stats['h264bsdDecode']['calls'], function_stats
+            functions = [{'function': name, **values} for name, values in function_stats.items() if values['calls']]
+            functions.sort(key=lambda row: row['inclusive_ms'], reverse=True)
         return {'nominal_stream_seconds': seconds, 'nominal_fps': fps, 'simulated_video_ms': guest.ms - guest.started_video,
                 'sent': len(frames), 'acked': guest.video_acks, 'painted': guest.projected,
                 'keyframes': sum(keyframe for _, keyframe in packets), 'bytes': sum(map(len, frames)),
@@ -1655,6 +1710,7 @@ def test_continuous(path, openssl, seconds, fps, progress, motion, profile):
                 'peak_guest_requested_bytes': guest.peak_bytes, 'live_allocations_after_close': len(guest.allocations),
                 'wall_seconds': round(wall, 3), 'host_cpu_seconds': round(cpu, 3),
                 'frame_ack_wall_ms': guest.frame_times, 'arm_function_wall_profile': counters,
+                'arm_h264_function_profile': functions,
                 'gdi_blit_wall_ms': [1000 * value for value in guest.blit_times],
                 'median_gdi_blit_ms': round(1000 * statistics.median(guest.blit_times), 3),
                 'video_format': 'rgb565' if guest.rgb565 else 'bgra'}
@@ -1764,6 +1820,8 @@ def main():
     parser.add_argument('--continuous-progress', type=Path, help='Save nominal video checkpoints as JSON lines')
     parser.add_argument('--motion-pattern', action='store_true', help='Use a higher-motion libavfilter source')
     parser.add_argument('--profile-video', action='store_true', help='Time decoder and BGRA functions in the ARM fixture')
+    parser.add_argument('--profile-h264-functions', action='store_true',
+                        help='Rank linked h264bsd functions by ARM fixture wall time')
     parser.add_argument('--navigation', type=Path, help='Exercise the stock input trampoline in a patched GDdNavi.exe')
     parser.add_argument('--reject-rgb565', action='store_true',
                         help='Reject one 16-bit DIB to verify the BGRA fallback (RGB565 builds only)')
@@ -1772,7 +1830,8 @@ def main():
         parser.error('ARM stress and continuous video require --tls-openssl')
     if args.stress_rounds < 0 or args.continuous_seconds < 0:
         parser.error('Test lengths cannot be negative')
-    if (args.continuous_progress or args.motion_pattern or args.profile_video) and not args.continuous_seconds:
+    if (args.continuous_progress or args.motion_pattern or args.profile_video or
+            args.profile_h264_functions) and not args.continuous_seconds:
         parser.error('Video options require --continuous-seconds')
     client = {case: UsbClient(args.artifacts / 'i30usb.dll', case).attach()
               for case in ('switch', 'version', 'not-armed', 'storage', 'unsupported', 'wrong-interface',
@@ -1819,7 +1878,8 @@ def main():
     if args.continuous_seconds:
         report['continuous_video'] = test_continuous(args.artifacts / 'i30usb.dll', args.tls_openssl,
                                                     args.continuous_seconds, args.continuous_fps,
-                                                    args.continuous_progress, args.motion_pattern, args.profile_video)
+                                                    args.continuous_progress, args.motion_pattern, args.profile_video,
+                                                    args.profile_h264_functions)
     if args.navigation:
         report['stock_touch_route'] = test_stock_touch_route(args.navigation)
     print(json.dumps(report, indent=2))
