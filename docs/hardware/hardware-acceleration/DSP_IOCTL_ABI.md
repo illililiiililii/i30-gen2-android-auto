@@ -1,13 +1,24 @@
 # VID1/DSP1 IOCTL ABI 상태
 
-## 확인한 호출 증거
+GD13MY .061 APP의 `002c98d9_LibMMCodec.dll`과 ROM의 `videodev.dll`에서 PE 가상 주소 기준으로 확인했다. 아래 수치는 정적 호출 근거다.
 
-- `LibMMCodec.dll`에는 `VID1:`, `IOCTL_VDEV_VID_DECINIT`, `IOCTL_VDEV_VID_DECODE`, `IOCTL_VDEV_VID_DEC_DEINIT`, `IOCTL_VDEV_IMG_QUERYINFO` 문자열이 있다. 해당 모듈은 `CreateFileW`, `DeviceIoControl`, `DirectDrawCreate`를 import한다.
-- ROM `videodev.dll`은 `VID_IOControl` export와 `DSP1:` 문자열을 가진다. `dsp_bridge.dll`에는 `DSP_IOControl` export가 있다.
-- 기존 연구 xref는 `docs/Free-model-research/hardware-acceleration/STOCK_DSP_VIDEO_PIPELINE.md`에 있다.
+| 명령 | 순정 송신 및 드라이버 분기 | 확인한 계약 |
+|---|---|---|
+| DECINIT `0x00220808` | `LibMMCodec`의 `0x115a88` → `videodev`의 `0x10009e00` → `0x1000af64` | 입력 556바이트, 출력 4바이트. 순정 호출자는 출력값 0을 초기화 성공으로 처리한다. |
+| DECODE `0x0022080c` | `LibMMCodec`의 `0x115b3c` → `videodev`의 `0x10009dc0` → `0x1000b1c0` | 입력 556바이트, 출력 4바이트. 순정 호출자는 출력의 상태값을 읽는다. |
+| DEC_DEINIT `0x0022081c` | `videodev`의 `0x10009fb8` | 비어 있는 입력 포인터와 556바이트 미만 입력을 거부한다. |
 
-## 미확인 계약
+송신 두 지점은 `0x1267b8` thunk를 통해 `COREDLL` ordinal 179를 호출한다. `LibMMCodec`의 `0x117fc4`에서도 DECINIT 래퍼를 호출하는 경로를 확인했다. 반환 DWORD는 디코딩된 프레임 버퍼가 아니다.
 
-바이너리 문자열/xref만으로 실제 `DeviceIoControl` 연결과 호출 인자, IOCTL 숫자, 입력·출력 구조체 크기/오프셋, 포인터 깊이, handle 수명, 출력 buffer owner를 증명하지 못했다. H.264 bitstream framing, SPS/PPS 설정, completion event/IRQ, DMA 주소 의미, DSP firmware load 경로, 실패 status, init/deinit sequence도 미확인이다. 따라서 순정 드라이버 호출이나 AARE host decoder bridge는 구현하지 않았다.
+## H.264 거부 분기와 드라이버 내부 구분
 
-실기기 없는 동안 추가 정적 분석은 각 DLL의 dispatcher와 DeviceIoControl 호출자 하나씩을 따라가며 해당 call site의 상수/길이/버퍼 준비를 확인한다. 함수명이나 문자열로 ABI 지원을 추정하지 않는다. 실제 ioctl 재현·WinCE 진단기는 구조체와 반환 계약이 충분히 입증된 뒤 작성한다.
+- `LibMMCodec`의 `0x106ea8`은 스트림 구조체 `[r6+0x0c]`를 읽는다. `0x106f34–0x106f48`에서 값 9, 6, 17이면 `0x108704`로 간다. 이곳에서 VA `0x160840`의 H.264/H.263 미지원 로그 전체를 읽고, `0x11cb64`에 이벤트 값 `0x15`를 전달한다. 이 지점은 순정 재생의 스트림 처리 분기다. 세 값 각각의 컨테이너 매핑은 미확인이다.
+- `videodev`의 메모리 query(`0x1000858c`)와 init(`0x100094a4`) 안에서 타입 6 비교(`0x10008664`, `0x1000953c`)가 각각 `MemQueryUnion.h264d.framesI...`와 `MemInitUnion.h264d.framesInD...` 로그로 이어진다. 타입 6은 드라이버의 해당 **디코더** 분기에 해당한다. 상위 스트림 ID와 드라이버 타입은 별도로 해석해야 한다. 기존 `h264e` 문자열은 인코더 측 자료다.
+- `videodev`의 `0x10009c10`은 DSP 디코드 응답 `0x76d`를 검사해 프로파일 거부 로그로 분기한다. 대응하는 실제 H.264 profile_idc와 펌웨어에서의 성공 경로는 미확인이다.
+- 고수준 `lmmCodecOpen`(`0x1165d0`)은 모듈 내부 객체를 붙여 `0x11d92c`로 전달한다. 여기서 입력 인자를 로그와 내부 호출에 전달한다. AARE의 Annex B access unit을 단독으로 제출할 수 있는 계약은 확인하지 못했다.
+
+## 남은 계약
+
+`LibMMCodec`의 `0x117d08`에서 초기화 입력의 준비를, `0x111c0c`의 DECODE 호출자에서 입력 비트스트림 및 버퍼 수명을 계속 추적한다. 필요한 계약은 codec ID 매핑, SPS/PPS와 framing, 공유 메모리 및 DMA/캐시 규칙, 완료 이벤트와 출력 버퍼 소유권이다. 실제 DSP 응답이 필요한 검증은 순정 드라이버와 적절한 벤치가 필요하다. 임의의 구조체 런타임 호출은 하지 않았다.
+
+[선행 파이프라인 조사](STOCK_DSP_VIDEO_PIPELINE.md)

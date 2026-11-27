@@ -13,4 +13,4 @@
 
 현재 AARE 경로는 WinCE 내 `h264bsdDecode()` 후 BGRA 변환과 GDI 표시다. 실기 디코딩·GDI 시간은 실측하지 않았다. TI OMAP3530 DVSDK의 Baseline 디코더 자료는 가능성 참고이며 OEM 구현의 증거가 아니다. 상세 선행 자료: [DSP 조사](../../chatGPT-search/Web-ChatGPT/GD13MY_DSP_ACCELERATION_RESEARCH.md), [펌웨어 영상 분석](../../VIDEO_AUDIO_ANALYSIS.md), [호스트-게스트 AARE 차이](AARE_HARDWARE_DECODING.md).
 
-현재까지 IOCTL 상수와 구조체 ABI의 검증된 값은 없다. 각 미확인 ABI 항목과 후속 정적 분석 경계는 [DSP IOCTL ABI 상태](DSP_IOCTL_ABI.md)에 분리 기록했다. 이번 성능 작업에서는 DSP 경로를 추측 구현하지 않았다.
+후속 정적 대조에서 DECINIT과 DECODE의 송신 상수, 입력 556바이트와 출력 4바이트, 순정 재생에서 H.264/H.263을 거부하는 조건, 드라이버 내부의 H.264 디코더 타입 6 분기를 확인했다. [DSP IOCTL ABI 상태](DSP_IOCTL_ABI.md)

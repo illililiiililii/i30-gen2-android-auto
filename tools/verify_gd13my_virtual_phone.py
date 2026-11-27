@@ -490,6 +490,7 @@ class NativeIntegrationRun(NativeMenuVideoRun):
         self.restore_map = restore_map
         self.map_returned = False
         self.map_offset = None
+        self.map_activity = []
         self.completed = []
         self.stage = 'frame'
         self.stream_start = None
@@ -511,6 +512,21 @@ class NativeIntegrationRun(NativeMenuVideoRun):
     def log_milestone(self, stage, **evidence):
         with self.output.with_suffix('.progress.jsonl').open('a', encoding='utf-8') as log:
             print(json.dumps({'stage': stage, 'guest_ticks': self.clock_ticks(), **evidence}), file=log)
+
+    def sample_map_activity(self, stage):
+        renderer = self.stock_renderer
+        self.map_activity.append({
+            'stage': stage,
+            'guest_ticks': self.clock_ticks(),
+            'host_wall_seconds': round(monotonic() - self.boot_started, 3),
+            'guest_map_swaps': renderer.swaps,
+            'emulated_map_plane_copies': renderer.map_copies,
+        })
+
+    def publish_frame(self):
+        if self.navigation_ready and not self.map_activity:
+            self.sample_map_activity('stock-ready')
+        super().publish_frame()
 
     def contact(self, points):
         for x, y, samples in points:
@@ -562,16 +578,23 @@ class NativeIntegrationRun(NativeMenuVideoRun):
         phone = self.phone_port
         ticks = self.clock_ticks()
         if self.stage == 'map-button' and monotonic() >= self.restore_at:
-            self.tap(400, 345)
             self.map_offset = len(uart)
-            self.stage = 'map-close'
+            if b'i30 automatic guest projection started;' in uart:
+                # The automatic projection popup already hid on USB detach.
+                self.micom.reply(NAVIGATION_MENU_PACKET)
+                self.stage = 'map-menu'
+            else:
+                self.tap(400, 345)
+                self.stage = 'map-close'
         elif self.stage == 'map-close' and b'Android Auto projection listener stopped.' in uart[self.map_offset:]:
             self.map_offset = len(uart)
             self.micom.reply(NAVIGATION_MENU_PACKET)
             self.stage = 'map-menu'
         elif self.stage == 'map-menu' and NAVIGATION_MENU_ACK in uart[self.map_offset:]:
             self.map_returned = True
+            self.stage = 'map-restored'
             self.log_milestone('stock-menu-after-close')
+            self.sample_map_activity('stock-menu-after-close')
             self.capture_evidence('restored-stock')
             self.closing.set()
         if self.stage.startswith('map-'):
@@ -581,6 +604,7 @@ class NativeIntegrationRun(NativeMenuVideoRun):
                 return
             if self.restore_at is None:
                 self.completed[-1]['display_released'] = True
+                self.sample_map_activity('display-released')
                 self.log_milestone('display-released', session=len(self.completed))
                 if len(self.completed) == self.cycles:
                     if self.restore_map:
@@ -606,6 +630,7 @@ class NativeIntegrationRun(NativeMenuVideoRun):
         if self.stage == 'frame' and phone.acks and pixels and all(r > 210 and g < 35 and b < 35 for r, g, b in pixels):
             self.red = pixels
             self.stream_start = process_time(), self.clock_ticks(), monotonic()
+            self.sample_map_activity('projection-first-frame')
             self.log_milestone('first-frame', session=len(self.completed) + 1)
             if not self.completed:
                 self.capture_evidence('before-touch')
@@ -663,6 +688,7 @@ class NativeIntegrationRun(NativeMenuVideoRun):
             })
             self.green = None
             self.log_milestone('stream-drained', session=len(self.completed), frames=phone.acks)
+            self.sample_map_activity('stream-drained')
             self.detached_at = len(uart)
             phone.controller.set_cable(False)
             self.stage = 'detached'
@@ -722,6 +748,7 @@ def verify(args):
             if args.stream_frames:
                 phone.clock = run.clock_ticks
             renderer = GuestGL(run, native_navigation) if native_navigation else None
+            run.stock_renderer = renderer
             started = monotonic()
             try:
                 report = run.run_window(args.seconds)
@@ -764,6 +791,7 @@ def verify(args):
                               replug_pixels_rgb=run.replug_pixels)
             if args.stream_frames:
                 status.update(cycles=run.completed, integration_stage=run.stage,
+                              stock_map_activity=run.map_activity,
                               last_touches=run.phone_port.touches, last_focus=run.phone_port.focus_history,
                               nominal_fps=args.fps, camera_sent_tick=run.camera_sent_tick,
                               camera_focus_tick=run.camera_focus_tick, camera_resumed_tick=run.camera_resumed_tick,
