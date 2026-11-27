@@ -1,17 +1,41 @@
 #include "ce_aa_video.h"
 
+#ifdef I30_VIDEO_UYVY_STAGING
+#include "ce_aa_uyvy.h"
+#endif
+
 CE_HANDLE GetDC(CE_HANDLE window);
 int ReleaseDC(CE_HANDLE window, CE_HANDLE dc);
 
-static CE_HANDLE begin_paint(void *window)
+static CE_HANDLE begin_paint(void *context)
 {
-    return GetDC(window);
+    (void)context;
+    return GetDC(0);
 }
 
-static void end_paint(void *window, CE_HANDLE dc)
+static void end_paint(void *context, CE_HANDLE dc)
 {
-    ReleaseDC(window, dc);
+    (void)context;
+    ReleaseDC(0, dc);
 }
+
+#ifdef I30_VIDEO_UYVY_STAGING
+enum { UYVY_PITCH = I30_VIDEO_WIDTH * 2 + 32, UYVY_BYTES = UYVY_PITCH * I30_VIDEO_HEIGHT };
+
+typedef struct UyvyStage {
+    uint8_t *bytes;
+    unsigned frames;
+} UyvyStage;
+
+static int stage_uyvy(void *context, const I30VideoGeometry *geometry, const uint8_t *i420)
+{
+    UyvyStage *stage = context;
+    if (!i30_pack_uyvy(geometry, i420, stage->bytes, UYVY_BYTES, UYVY_PITCH))
+        return 0;
+    ++stage->frames;
+    return 1;
+}
+#endif
 
 /* Bench-only entry. A projection session supplies its display context and USB payload. */
 void i30_ce_entry(void)
@@ -26,15 +50,31 @@ void i30_ce_entry(void)
         if (bytes && ReadFile(file, bytes, I30_VIDEO_INPUT_LIMIT, &length, 0) && length &&
             ReadFile(file, &trailing, 1, &surplus, 0) && !surplus) {
             I30Video *video = i30_video_open();
-            const I30VideoTarget target = {0, begin_paint, end_paint};
-            if (video)
+            if (video) {
+#ifdef I30_VIDEO_UYVY_STAGING
+                UyvyStage stage = {HeapAlloc(heap, 0, UYVY_BYTES), 0};
+                const I30VideoTarget target = {&stage, begin_paint, end_paint, stage_uyvy};
                 painted = i30_video_push(video, &target, bytes, length) > 0;
+                OutputDebugStringW(stage.frames ?
+                    L"i30 CE UYVY staged in memory.\r\n" :
+                    L"i30 CE UYVY staging unavailable.\r\n");
+                if (stage.bytes)
+                    HeapFree(heap, 0, stage.bytes);
+#else
+                const I30VideoTarget target = {0, begin_paint, end_paint};
+                painted = i30_video_push(video, &target, bytes, length) > 0;
+#endif
+            }
             i30_video_close(video);
         }
         if (bytes)
             HeapFree(heap, 0, bytes);
         CloseHandle(file);
     }
+#ifdef I30_VIDEO_UYVY_STAGING
+    OutputDebugStringW(painted ? L"i30 CE H.264 output consumed.\r\n" : L"i30 CE H.264 video probe failed.\r\n");
+#else
     OutputDebugStringW(painted ? L"i30 CE H.264 picture painted.\r\n" : L"i30 CE H.264 video probe failed.\r\n");
+#endif
     ExitThread(painted ? 0U : 1U);
 }

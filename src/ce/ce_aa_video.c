@@ -83,7 +83,9 @@ static uint16_t *frame565_buffer(I30Video *video)
         video->frame565 = malloc(sizeof(uint16_t) * I30_VIDEO_WIDTH * I30_VIDEO_HEIGHT);
     return video->frame565;
 }
+#endif
 
+#if defined(I30_VIDEO_RGB565) || defined(I30_VIDEO_UYVY_STAGING)
 static uint32_t *bgra_fallback_buffer(I30Video *video)
 {
     if (!video->bgra_fallback)
@@ -99,11 +101,7 @@ __attribute__((noinline)) void i30_yuv420_to_rgb565(unsigned width, unsigned hei
     i30_yuv420_to_rgb565_impl(width, height, luma, cb, cr, out);
 }
 
-typedef struct PaintGeometry {
-    unsigned coded_w, coded_h, left, top, width, height;
-} PaintGeometry;
-
-static int blit_bgra(const I30VideoTarget *target, const PaintGeometry *geometry, const void *pixels)
+static int blit_bgra(const I30VideoTarget *target, const I30VideoGeometry *geometry, const void *pixels)
 {
     const BitmapHeader info = {sizeof(info), (int32_t)geometry->coded_w, -(int32_t)geometry->coded_h,
                                1, 32, 0, geometry->coded_w * geometry->coded_h * 4U, 0, 0, 0, 0};
@@ -122,7 +120,7 @@ static int blit_bgra(const I30VideoTarget *target, const PaintGeometry *geometry
 
 #ifdef I30_VIDEO_RGB565
 static int paint_from_yuv565(I30Video *video, const I30VideoTarget *target,
-                             const PaintGeometry *geometry, const uint8_t *data)
+                            const I30VideoGeometry *geometry, const uint8_t *data)
 {
     uint16_t *pixels = frame565_buffer(video);
     const unsigned pixels_count = geometry->coded_w * geometry->coded_h;
@@ -147,9 +145,11 @@ static int paint_from_yuv565(I30Video *video, const I30VideoTarget *target,
     OutputDebugStringW(L"i30 LCD blit end\r\n");
     return painted > 0 ? 1 : -1;
 }
+#endif
 
+#if defined(I30_VIDEO_RGB565) || defined(I30_VIDEO_UYVY_STAGING)
 static int paint_from_yuv_bgra(I30Video *video, const I30VideoTarget *target,
-                               const PaintGeometry *geometry, const uint8_t *data)
+                              const I30VideoGeometry *geometry, const uint8_t *data)
 {
     uint32_t *pixels = bgra_fallback_buffer(video);
     if (!pixels)
@@ -157,8 +157,10 @@ static int paint_from_yuv_bgra(I30Video *video, const I30VideoTarget *target,
     h264bsdConvertToBGRA(geometry->coded_w, geometry->coded_h, (u8 *)data, (u32 *)pixels);
     return blit_bgra(target, geometry, pixels);
 }
-#else
-static int paint_bgra(storage_t *decoder, const I30VideoTarget *target, const PaintGeometry *geometry)
+#endif
+
+#if !defined(I30_VIDEO_RGB565) && !defined(I30_VIDEO_UYVY_STAGING)
+static int paint_bgra(storage_t *decoder, const I30VideoTarget *target, const I30VideoGeometry *geometry)
 {
     unsigned id, keyframe, errors;
     const u32 *pixels = h264bsdNextOutputPictureBGRA(decoder, &id, &keyframe, &errors);
@@ -171,7 +173,7 @@ static int paint_bgra(storage_t *decoder, const I30VideoTarget *target, const Pa
 static int paint(I30Video *video, const I30VideoTarget *target)
 {
     storage_t *decoder = &video->decoder;
-    PaintGeometry geometry = {h264bsdPicWidth(decoder) * 16U, h264bsdPicHeight(decoder) * 16U, 0, 0, 0, 0};
+    I30VideoGeometry geometry = {h264bsdPicWidth(decoder) * 16U, h264bsdPicHeight(decoder) * 16U, 0, 0, 0, 0};
     unsigned cropped, id, keyframe, errors;
     if (!geometry.coded_w || !geometry.coded_h ||
         geometry.coded_w > I30_VIDEO_WIDTH || geometry.coded_h > I30_VIDEO_HEIGHT)
@@ -191,17 +193,21 @@ static int paint(I30Video *video, const I30VideoTarget *target)
         h264bsdNextOutputPicture(decoder, &id, &keyframe, &errors);
         return 0;
     }
+#if defined(I30_VIDEO_RGB565) || defined(I30_VIDEO_UYVY_STAGING)
+    const uint8_t *data = h264bsdNextOutputPicture(decoder, &id, &keyframe, &errors);
+    if (!data)
+        return 0;
+#ifdef I30_VIDEO_UYVY_STAGING
+    if (target->present_yuv && target->present_yuv(target->context, &geometry, data))
+        return 1;
+#endif
 #ifdef I30_VIDEO_RGB565
-    {
-        const uint8_t *data = h264bsdNextOutputPicture(decoder, &id, &keyframe, &errors);
-        if (!data)
-            return 0;
-        int painted = paint_from_yuv565(video, target, &geometry, data);
-        if (painted >= 0)
-            return painted;
-        OutputDebugStringW(L"i30 CE GDI rejected 16-bit DIB; using BGRA fallback.\r\n");
-        return paint_from_yuv_bgra(video, target, &geometry, data);
-    }
+    int painted = paint_from_yuv565(video, target, &geometry, data);
+    if (painted >= 0)
+        return painted;
+    OutputDebugStringW(L"i30 CE GDI rejected 16-bit DIB; using BGRA fallback.\r\n");
+#endif
+    return paint_from_yuv_bgra(video, target, &geometry, data);
 #else
     return paint_bgra(decoder, target, &geometry);
 #endif

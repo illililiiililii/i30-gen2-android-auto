@@ -7,17 +7,26 @@ enum { I30_VIDEO_WIDTH = 800, I30_VIDEO_HEIGHT = 480, I30_VIDEO_INPUT_LIMIT = 2 
 
 typedef struct I30Video I30Video;
 
+typedef struct I30VideoGeometry {
+    unsigned coded_w, coded_h, left, top, width, height;
+} I30VideoGeometry;
+
 typedef struct I30VideoTarget {
     void *context;
     CE_HANDLE (*begin)(void *context);
     void (*end)(void *context, CE_HANDLE dc);
+#ifdef I30_VIDEO_UYVY_STAGING
+    /* Optional synchronous I420 consumer. Return 1 on success or 0 to use
+     * GDI. The decoder owns the input and may reuse it after this call. */
+    int (*present_yuv)(void *context, const I30VideoGeometry *geometry, const uint8_t *i420);
+#endif
 } I30VideoTarget;
 
 I30Video *i30_video_open(void);
 void i30_video_close(I30Video *video);
 
-/* Decode mutable Annex B data. A null context updates the decoder without drawing.
- * Return the number of pictures painted, or -1 for a rejected stream or GDI error. */
+/* Decode mutable Annex B data. A null target updates the decoder without presenting.
+ * Return the number of pictures consumed by the target, or -1 on error. */
 int i30_video_push(I30Video *video, const I30VideoTarget *target, uint8_t *bytes, unsigned size);
 
 #endif

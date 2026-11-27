@@ -14,8 +14,8 @@ v8 게스트 자동 실행은 `b912009`에서 추가됐다. 실폰 USB 시험의
 | GPU | WGL 선택 경로; readback 때문에 GDI 기본 유지 | [실지도 벤치](hardware/hardware-acceleration/REAL_MAP_BENCHMARK.md) |
 | GPTimer | 전체 guest 처리량 +7.7%, 지도 구간 +0.9%; 체감 개선 미입증 | [실지도 벤치](hardware/hardware-acceleration/REAL_MAP_BENCHMARK.md) |
 | 순정 지도 리소스 | 지도와 투사 창은 기존 구조에서 같은 프로세스에 의존한다. 가상폰 투사 구간 지도 swap/복사 0~6회, GPS 재설정 로그 지속, 분리 후 순정 메뉴 응답 확인 | [A 기준 측정](testing/AARE_STOCK_RESOURCE_BASELINE.md) |
-| 순정 영상 출력 | 순정 UYVY 오버레이 포맷 확인, 실제 800×480 표면과 점유 계약 미검증 | [영상 출력](testing/AARE_STOCK_RESOURCE_BASELINE.md#순정-영상-출력) |
-| DSP | DECINIT·DECODE의 556B 입력과 4B 상태, 상위 H.264/H.263 거부 분기와 드라이버 내부 H.264 디코더 분기 확인. 하드웨어 디코딩 미검증 | [DSP ABI](hardware/hardware-acceleration/DSP_IOCTL_ABI.md) |
+| 순정 영상 출력 | 순정 UYVY 생성·해제 흐름 확인, ARM에서 h264bsd→UYVY 메모리 스테이징 및 BGRA 폴백 검증, 실제 표면 점유 미검증 | [영상 출력](testing/AARE_STOCK_RESOURCE_BASELINE.md#순정-영상-출력) |
+| DSP | DECINIT·DECODE의 556B 입력과 4B 상태, H.264 타입 6의 DSP 버전 응답 기능 비트와 일부 버퍼 필드 확인. 하드웨어 디코딩 미검증 | [DSP ABI](hardware/hardware-acceleration/DSP_IOCTL_ABI.md) |
 | 영상 파이프라인 | 8단계 인벤토리 정리(USB-TLS-AAP-H264-색변환-복사-출력), BGRA 변환 병목 식별 | [파이프라인](android-auto/aare/VIDEO_PIPELINE_INVENTORY.md) |
 | H.264 디코더 최적화 | ARM fixture에서 fast-copy 후보 반복 개선 확인, 실기 미검증으로 opt-in 유지; codegen/NEON 기본값 변경 없음 | [최적화 결과](android-auto/aare/H264_OPTIMIZATION_RESULTS.md) |
 | 자동 실행 옵션별 실폰 동작 | 두 옵션 ON 검증. USB만 ON, 부팅만 ON, 모두 OFF, 후방카메라 선점 및 비정상 종료 복구 미검증. 약 2초 자동 동의는 v8에 없음 | [실폰 재연결 시험](testing/AARE_PHYSICAL_USB_RECOVERY.md) |

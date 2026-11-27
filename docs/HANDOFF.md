@@ -1,6 +1,6 @@
 # 최신 인계 진입점
 
-순정 지도 리소스 및 영상 경로 조사는 [A 기준 계측과 후속 분석 위치](testing/AARE_STOCK_RESOURCE_BASELINE.md)부터 확인한다. 물리 USB는 기존 P0 복구 이미지를 사용한다. 새 폰용 AARE 1.6.0 APK와 이미지에 일치하는 인증서 세트는 로컬 `build/aare-tools` 및 `build/aare-tools/identity`에 있다.
+순정 지도 리소스 및 영상 경로 조사는 [A 기준 계측과 후속 분석 위치](testing/AARE_STOCK_RESOURCE_BASELINE.md)부터 확인한다. h264bsd의 UYVY 메모리 스테이징과 같은 프레임의 BGRA 폴백은 ARM 시험을 통과했다. 기본 CE 바이너리는 기존 P0 복구 이미지와 동일해 물리 USB 대기 뷰어는 현재 이미지로 유지한다. 새 폰용 AARE 1.6.0 APK와 이미지에 일치하는 인증서 세트는 로컬 `build/aare-tools` 및 `build/aare-tools/identity`에 있다.
 
 1. [PROJECT_STATUS](PROJECT_STATUS.md)와 [NEXT_TASKS](NEXT_TASKS.md)를 읽는다.
 2. 현재 git status 및 최신 커밋을 확인한다. v8 실폰 시험은 `f004f6f` 소스와 기존 v8 이미지를 사용했다. [실폰 재연결 시험](testing/AARE_PHYSICAL_USB_RECOVERY.md)

@@ -7,7 +7,7 @@
 | 방식 | 판단 |
 |---|---|
 | A. 지도 위에 투사 창 배치 | 현재 방식이다. 자동 실행에서는 첫 정상 영상 전까지 지도가 보이고 USB 분리 후 투사 창이 숨겨진다. 투사 중에도 순정 지도 프로세스는 살아 있다. |
-| B. 지도 연산·렌더링 일시 중단 | 순정의 협력적 중지/재개 진입점과 영향 범위를 확인하지 못했다. 지도 PE의 `PauseSetDest` xref `0x1124c0`는 경로 목적지 검사 로그다. 이 증거로 렌더링 중단을 선택할 수 없다. |
+| B. 지도 연산·렌더링 일시 중단 | 순정의 협력적 중지/재개 진입점과 영향 범위를 확인하지 못했다. 지도 PE의 `PauseSetDest` xref `0x1124c0`는 경로 목적지 검사 로그다. 순정 `CMapFlyer::UpdateMapFlyer`의 `CheckMapDirState` 분기(`0x90bd0`)는 내부 플래그를 검사하고 호출 후 지운다. `OnTimer`의 `0x93588`은 주변 등록 지점 점프 타이머다. 두 곳 모두 외부에서 지도 렌더러 전체를 일시 중지하고 안전하게 재개할 계약을 제공한다는 근거가 없다. 이 증거로 렌더링 중단을 선택할 수 없다. |
 | C. 정상 종료·재시작 | `GDdNavi.exe` 내부의 `i30nav.dll`이 투사 창을 소유하고 USB 대기 작업 스레드를 띄운다. 지도 프로세스 종료는 해당 창과 작업 스레드도 없앤다. 정상 종료·재실행 계약, 독립 복구 감독기와 안전 복귀를 확보할 때까지 이 방식을 시험하지 않는다. |
 
 `gd13my_aa_menu.S`의 순정 메뉴 훅은 `i30nav.dll`을 로드하고 수동 및 자동 진입점을 호출한다. `ce_aa_native_display.cpp`의 `refresh()`는 지도 HWND의 존재와 상대 Z-order를 검증하며 카메라 표시권이 바뀌면 숨기고 터치를 취소한다. USB 트래픽은 `i30usb.dll!USBDeviceAttach`로 진입한다. `i30aa.exe`의 빌드 대상은 설정 UI다. 기존 감독기 코드는 P0 이미지에서 독립적인 지도 복구 수단으로 연결되어 있지 않다. [빌드 및 엔트리](../../tools/build_ce_usb.py) · [메뉴 훅](../../src/ce/gd13my_aa_menu.S) · [투사 창](../../src/ce/ce_aa_native_display.cpp)
@@ -38,6 +38,19 @@
 원본 .061 `003248a0_LibVideo.dll`에서 `lVideoShowOverlay`(`0x1011d0`)는 순정 비디오 상태 객체 `0x10b110`과 표시 인자를 내부 `0x103b48`로 전달한다. `0x1032f0`부터 오버레이 지원 조건을 검사한다. `0x103354–0x103390`에서 `0x10b0e4`의 32바이트 픽셀 포맷을 복사한다. 여기에는 flags `0x4`와 FourCC `UYVY`가 들어 있다. 이 순정 호출은 기본 폭 720, 높이 576 및 backbuffer 요청값 2를 채운 뒤 `0x1033b0`에서 오버레이를 생성한다. `LibMMCodec.dll`의 `0x17e390`에도 같은 포맷 구조가 있다. 순정 쇼/숨김 분기(`0x10352c`, `0x1035bc`), Lock 실패(`0x103ce4`), 크기 변경(`0x103898`, `0x1038c4`), 해제 시 숨김(`0x102b34`)을 가리키는 로그 참조가 있다.
 
 이 근거에서 검토할 첫 포맷은 **UYVY 4:2:2**다. h264bsd의 planar YUV420을 사용하려면 최소한 UYVY 패킹과 chroma 행 확장이 필요하다. YUV420 직접 제출, YUY2, 오버레이 RGB565, 800×480의 실제 surface capability는 미확인이다. 출력 후보를 연결하려면 Lock 시 반환 pitch, 크롭과 스케일링, Flip과 Unlock의 완료·버퍼 수명, 카메라와 표면 점유 전환을 먼저 확인해야 한다. 테스트 환경에 물리 오버레이 동작을 검증할 모델이 없어 백엔드를 추가하지 않았다. 후속 정적 확인은 `LibVideo`의 `0x102e44` Lock 래퍼와 `0x1033d4` 이후의 backbuffer 및 `0x102b00` 해제 경로에서 시작한다.
+
+### 후속 UYVY 스테이징 시험
+
+순정 `LibVideo`의 Lock(`0x102e44`)은 108바이트 surface descriptor와 vtable `+0x4c`를, Unlock(`0x102e9c`)은 `+0x68`을 사용한다. 생성 이후 `0x1033d4–0x103424`에서 연결된 표면을 열거하고, `0x102ddc`와 `0x10352c` 근처에서 오버레이 갱신을 호출한다. `0x102b54–0x102bf8`의 해제 경로는 오버레이를 숨기고 overlay, primary 및 DirectDraw 참조를 차례로 반환한다. `lVideoShowOverlay` 내부는 순정 객체 상태를 기록하고 자체 창에 메시지 `0xb002`를 전달한다(`0x103b54–0x103b74`). 별도 프로세스가 이 호출을 사용해 순정 오버레이를 소유할 수 있는지와 후방카메라와의 표면 인계는 미확인이다.
+
+`--uyvy-staging`으로 별도 CE 시험 실행 파일을 빌드한다. 실제 h264bsd I420 출력에서 crop과 destination pitch를 반영해 UYVY를 메모리에 한 번에 기록한다. 픽셀 형식은 `U Y0 V Y1`이며, 4:2:0의 Cb/Cr 행은 대응하는 두 Y 행에 사용한다. 동기 콜백이 출력에 실패하면 같은 디코딩 결과를 BGRA DIB로 전달한다. CE USB 수신기의 기본 빌드는 이 시험 경로를 포함하지 않는다. 패딩을 제외한 800×480의 UYVY 프레임은 768,000바이트이고 BGRA는 1,536,000바이트다. 이는 형식별 데이터 크기이며, 실제 표면 복사량과 성능은 측정 전이다.
+
+ARM fixture에서 800×480, crop된 798×478, 행 및 끝 패딩 보존, 출력 버퍼 할당 실패 후 같은 프레임의 32bpp GDI 폴백과 할당 해제를 검증했다. 화면 출력을 공유하는 하드웨어 백엔드는 표면 크기·pitch·동기화 및 카메라 권한 인계를 확인한 뒤 연결한다. 기본 CE PE 세 개를 다시 빌드해 기존 P0 실행 이미지에 사용한 산출물과 SHA-256이 모두 일치함을 확인했다. 새 기본 빌드에서 ARM USB/TLS/투사·카메라 선점·재연결 fixture와 순정 터치 11개 경로, Python 테스트 97개(환경 조건으로 1개 건너뜀)를 통과했다. [변환 코드](../../src/ce/ce_aa_uyvy.h) · [ARM 검증](../../tools/verify_ce_uyvy_staging.py)
+
+```powershell
+& $py tools/build_ce_minimal.py --compiler $cc --h264-source build/ce-video-dependency/h264bsd --uyvy-staging
+& $py tools/verify_ce_uyvy_staging.py build/gd13my-ce-uyvy-staging/i30video.exe
+```
 
 ## DSP 디코딩
 

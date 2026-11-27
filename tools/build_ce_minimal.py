@@ -101,7 +101,11 @@ def main():
     variant = parser.add_mutually_exclusive_group()
     variant.add_argument('--settings', action='store_true', help='Build the interactive Android Auto settings test')
     variant.add_argument('--h264-source', type=Path, help='Build a CE video output probe with this h264bsd source tree')
+    parser.add_argument('--uyvy-staging', action='store_true',
+                        help='Pack decoded I420 into memory in the standalone video probe')
     args = parser.parse_args()
+    if args.uyvy_staging and not args.h264_source:
+        parser.error('--uyvy-staging requires --h264-source')
     compiler = args.compiler.resolve(strict=True)
     archiver = compiler.with_name(compiler.name.replace('gcc', 'ar')).resolve(strict=True)
     if archiver == compiler:
@@ -117,7 +121,7 @@ def main():
         headers = decoder / 'src'
         if not (headers / 'h264bsd_decoder.h').is_file() or not (decoder / 'LICENSE.md').is_file():
             parser.error('Expected the h264bsd repository with source and license')
-        output = ROOT / 'build/gd13my-ce-video'
+        output = ROOT / ('build/gd13my-ce-uyvy-staging' if args.uyvy_staging else 'build/gd13my-ce-video')
         output.mkdir(parents=True, exist_ok=True)
         api = ('CreateFileW', 'ReadFile', 'CloseHandle', 'GetProcessHeap', 'HeapAlloc', 'HeapFree',
                'GetDC', 'ReleaseDC', 'StretchDIBits', 'OutputDebugStringW', 'ExitThread')
@@ -126,10 +130,11 @@ def main():
             assembly = staging / 'ce_api.S'
             assembly.write_text(import_assembly(exports, api), encoding='ascii')
             elf = staging / 'i30video.elf'
+            defines = ['-DI30_VIDEO_UYVY_STAGING'] if args.uyvy_staging else []
             subprocess.run([compiler, '-march=armv4t', '-marm', '-Os', '-ffreestanding', '-fshort-wchar',
                             '-fno-stack-protector', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables',
                             '-ffunction-sections', '-fdata-sections', f'-I{headers}', '-nostdlib', '-static',
-                            f'-Wl,--gc-sections,-T,{source / "ce_minimal.ld"}', '-o', elf, assembly,
+                            *defines, f'-Wl,--gc-sections,-T,{source / "ce_minimal.ld"}', '-o', elf, assembly,
                             source / 'ce_aa_video.c', source / 'ce_aa_video_probe.c',
                             *sorted(headers.glob('*.c')), '-lc', '-lgcc'], check=True, cwd=staging, timeout=90)
             probe = output / 'i30video.exe'
