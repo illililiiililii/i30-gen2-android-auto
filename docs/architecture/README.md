@@ -1,0 +1,7 @@
+# architecture
+
+[현재 상태](../PROJECT_STATUS.md) · [이동 목록](../RELOCATION.md)
+
+- [CE_SDK_RESEARCH.md](CE_SDK_RESEARCH.md)
+- [ENVIRONMENT.md](ENVIRONMENT.md)
+- [PHASE2_ARCHITECTURE.md](PHASE2_ARCHITECTURE.md)

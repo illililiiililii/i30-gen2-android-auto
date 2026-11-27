@@ -16,4 +16,4 @@ aasdk의 `9bf6adf9`를 기준으로 삼았다. `tools/build_phase2.py`는 공개
 
 모의 통합 시험은 임시 자체 서명 테스트 인증서를 양쪽에 신뢰시키는 로컬 TLS 1.2 교환을 수행한다. 테스트 키는 임시 폴더에 생성돼 후처리로 제거된다. 실제 폰에서 신뢰하는 헤드유닛 인증서, 폰의 인증 체인과 Android Auto 버전은 별도 검증이 필요하다. 저장소나 패키지에 기존 시스템의 키를 넣지 않았다.
 
-[수신기 소스](../src/i30_receiver/protocol.py) · [프레임 소스](../src/i30_receiver/wire.py) · [모의 세션 로그](../research/evidence/phase2-release-normal.jsonl)
+[수신기 소스](../../src/i30_receiver/protocol.py) · [프레임 소스](../../src/i30_receiver/wire.py) · [모의 세션 로그](../research/evidence/phase2-release-normal.jsonl)

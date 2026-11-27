@@ -1,0 +1,20 @@
+# hardware
+
+[현재 상태](../PROJECT_STATUS.md) · [이동 목록](../RELOCATION.md)
+
+- [hardware-acceleration/AARE_HARDWARE_DECODING.md](hardware-acceleration/AARE_HARDWARE_DECODING.md)
+- [hardware-acceleration/BRICK_PREVENTION_NOTES.md](hardware-acceleration/BRICK_PREVENTION_NOTES.md)
+- [hardware-acceleration/DSP_IOCTL_ABI.md](hardware-acceleration/DSP_IOCTL_ABI.md)
+- [hardware-acceleration/EMULATOR_HARDWARE_GAP.md](hardware-acceleration/EMULATOR_HARDWARE_GAP.md)
+- [hardware-acceleration/FINAL_HANDOFF.md](hardware-acceleration/FINAL_HANDOFF.md)
+- [hardware-acceleration/GPU_READBACK_OPTIMIZATION.md](hardware-acceleration/GPU_READBACK_OPTIMIZATION.md)
+- [hardware-acceleration/HARDWARE_FIDELITY_BENCHMARK.md](hardware-acceleration/HARDWARE_FIDELITY_BENCHMARK.md)
+- [hardware-acceleration/HARDWARE_FIDELITY_GAPS.md](hardware-acceleration/HARDWARE_FIDELITY_GAPS.md)
+- [hardware-acceleration/HARDWARE_INVENTORY.md](hardware-acceleration/HARDWARE_INVENTORY.md)
+- [hardware-acceleration/HOST_ACCELERATION_BRIDGE.md](hardware-acceleration/HOST_ACCELERATION_BRIDGE.md)
+- [hardware-acceleration/PERFORMANCE_RESULTS.md](hardware-acceleration/PERFORMANCE_RESULTS.md)
+- [hardware-acceleration/REAL_MAP_BENCHMARK.md](hardware-acceleration/REAL_MAP_BENCHMARK.md)
+- [hardware-acceleration/STOCK_DSP_VIDEO_PIPELINE.md](hardware-acceleration/STOCK_DSP_VIDEO_PIPELINE.md)
+- [hardware-acceleration/STOCK_GPU_PIPELINE.md](hardware-acceleration/STOCK_GPU_PIPELINE.md)
+- [HARDWARE.md](HARDWARE.md)
+- [HARDWARE_COMPATIBILITY.md](HARDWARE_COMPATIBILITY.md)

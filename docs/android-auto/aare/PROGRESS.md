@@ -29,4 +29,4 @@
 - v8 가상 이미지의 native-auto 시험에서 실제 순정 지도 ACK 뒤 자동 투사 창 시작, 가상 USB/AOA, TLS 1.2 상호 인증, 서비스 탐색과 `i30 CE projection frame presented.`까지 확인했다. 분리/재연결의 픽셀 감지 시험은 끝까지 확인되지 않아 미검증으로 남긴다. 물리 스마트폰 USB 권한/Trust, 실폰 최초 프레임, 실차 FPS와 ±5% 목표도 미검증이다.
 - 가상폰 시험과 재현 산출물은 `build/gd13my-aa-autostart-v8/`에 있다. 자동 시작 추가로 FPS 개선을 주장하지 않으며, 측정되지 않은 실제 지도 속도와 기존 약 +0.9% 표본 차이는 성능 향상으로 분류하지 않는다.
 
-GPU readback, 실측 지도 FPS와 DSP IOCTL ABI 결론은 이전 수치를 그대로 유지한다. 자세한 빌드·시험 상태는 [하드웨어 가속 인계](../Free-model-research/hardware-acceleration/FINAL_HANDOFF.md)에서 이어간다.
+GPU readback, 실측 지도 FPS와 DSP IOCTL ABI 결론은 이전 수치를 그대로 유지한다. 자세한 빌드·시험 상태는 [하드웨어 가속 인계](../../hardware/hardware-acceleration/FINAL_HANDOFF.md)에서 이어간다.

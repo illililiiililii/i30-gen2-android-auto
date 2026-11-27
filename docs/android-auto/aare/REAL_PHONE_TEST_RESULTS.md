@@ -61,7 +61,7 @@
 
 14:52 새 이미지에서 운영 코드의 MUSB 보정만으로 상호 TLS, `AUTH_COMPLETE`, 영상 채널과 실폰 화면을 다시 확인했다. 시험 좌표 `(48, 440)`의 눌림과 뗌이 순정 내비와 투사 창의 `handle_touch` 모두에 도착했고 WinCE의 입력 큐 읽기 요청도 확인했다. 앱 목록 전환은 관찰되지 않았다. 이 실행의 `.integrated-touch.log`와 UART는 로컬 `E:/i30-gd13my-images/opencode-resume-perf/touch/live/`에 있다.
 
-첫 화면이 위에서 아래로 나눠 보였으며, 앞선 시험의 AARE 로그는 프레임 600 시점에 누적 541개 드롭을 기록했다. 기존 ARM 계측의 고움직임 영상은 프레임당 H.264 디코딩 평균 224.74ms, BGRA 변환 평균 70.63ms였다. 실제 창은 여기에 WinCE의 `StretchDIBits` 화면 복사와 에뮬레이터 캡처가 더해진다. 순정 OMAP 실기의 성능과 안전한 업데이트·복구는 아직 실기에서 시험하지 않았다. [ARM 영상 계측](../Codex-post-auth-integration/REGRESSION_TEST_RESULTS.md)
+첫 화면이 위에서 아래로 나눠 보였으며, 앞선 시험의 AARE 로그는 프레임 600 시점에 누적 541개 드롭을 기록했다. 기존 ARM 계측의 고움직임 영상은 프레임당 H.264 디코딩 평균 224.74ms, BGRA 변환 평균 70.63ms였다. 실제 창은 여기에 WinCE의 `StretchDIBits` 화면 복사와 에뮬레이터 캡처가 더해진다. 순정 OMAP 실기의 성능과 안전한 업데이트·복구는 아직 실기에서 시험하지 않았다. [ARM 영상 계측](../post-auth/REGRESSION_TEST_RESULTS.md)
 
 H.264 `-O2`와 AARE 설정을 합친 새 이미지에서 `사용법 보기`를 열어 둔 상태로 삼성 폰의 상호 TLS, `AUTH_COMPLETE`, 서비스 탐색 및 첫 영상까지 완료됐다. 첫 영상이 안내 화면을 자동으로 대체했다. 실제 폰의 하단 앱 목록 버튼을 눌렀을 때 WinCE가 입력 큐에서 누름과 뗌을 읽었고, 출력 화면은 대시보드에서 앱 목록으로 바뀌었다. 새 화면이 위쪽부터 표시되는 현상은 남아 있다. 원본 UART 및 `.touch-queue.log`, `probe-touch-before.png`, `probe-touch-after.png`는 로컬 `E:/i30-gd13my-images/opencode-resume-perf/touch/aare-settings-live/`에 있다.
 

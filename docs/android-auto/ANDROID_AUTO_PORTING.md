@@ -12,7 +12,7 @@
 | 오디오·마이크 | media/system/speech 채널과 QtAudio/RtAudio 출력, QtAudioInput 기반 캡처가 분리돼 있다. CE의 WAVE API 및 OEM 음량 처리는 다시 연결해야 한다. | media sink에 미디어·안내·시스템·전화 채널과 microphone source 정의가 있다. PCM 재생과 캡처 장치는 제공하지 않는다. | `QtAudioOutput.cpp`의 Qt6 `QAudioSink`, QtAudioInput, 서비스별 음성, AudioGraph 및 덕킹 구현이 있다. Linux 오디오 포커스 방식은 CE의 OEM 장치 소유권과 별개다. |
 | 입력 | `Projection/InputDevice.cpp`에서 Qt 이벤트를 터치·키로 변환해 InputService에 전달한다. | `InputSourceService.cpp` 및 메시지 정의가 채널 전송을 제공한다. OS의 터치·버튼을 받는 것은 앱 역할이다. | `Projection/InputDevice.cpp`가 Qt 터치/마우스 좌표를 프로젝션 영역으로 변환한다. 기존 CE 입력 핸들러와 연결하려면 어댑터가 필요하다. |
 | 성능·메모리 | README에 명시한 Pi 성능은 이 장치와 다른 디코더 환경의 주장이다. Qt와 미디어 의존성을 포함한 CE 실측치가 없다. | 전체 앱보다 경량화 여지는 있지만, Boost/Protobuf/TLS 버퍼와 USB 전송 큐에 대한 CE RSS 또는 지연 측정값이 없다. | 코드에서 디코드 워커와 렌더 스레드 간 프레임 복사를 확인했다. CE에서는 Qt/FFmpeg 사용자 공간 메모리를 산출할 수 있는 실행 빌드가 없다. |
-| 라이선스·재배포 | README GPLv3, 주요 소스는 GPLv3 이상 고지. | 문서 GPLv3, 소스 GPLv3 이상 고지. 확인한 커밋의 루트 LICENSE 부재는 [Phase 0 연구](RESEARCH.md)에 기록했다. 코드 채택 전 원문 조건을 다시 확인한다. | GPL-3.0으로 표시한다. FFmpeg 빌드 옵션과 기타 종속물의 재배포 조건은 별도다. |
+| 라이선스·재배포 | README GPLv3, 주요 소스는 GPLv3 이상 고지. | 문서 GPLv3, 소스 GPLv3 이상 고지. 확인한 커밋의 루트 LICENSE 부재는 [Phase 0 연구](../research/RESEARCH.md)에 기록했다. 코드 채택 전 원문 조건을 다시 확인한다. | GPL-3.0으로 표시한다. FFmpeg 빌드 옵션과 기타 종속물의 재배포 조건은 별도다. |
 
 소스 포함 배포를 택한다면 채택한 파일의 라이선스 고지와 해당하는 소스 제공 의무를 기록한다. 공개 저장소의 프로젝트 소스와 OEM 펌웨어는 별개로 관리한다. 대상 CE의 기본 C/C++ RTL, 정확한 linker 및 SDK, ARM interworking과 import table은 작은 검증용 PE로 확인할 항목이다.
 

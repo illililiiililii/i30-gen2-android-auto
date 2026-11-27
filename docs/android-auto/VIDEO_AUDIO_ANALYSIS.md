@@ -11,7 +11,7 @@
 | 터치 | `default.hv` 파일 `0x112d2`에 `digen_touch.dll`. ROM 모듈 `TouchPanelEnable` RVA `0x3204`, `TouchPanelSetCalibration` `0x186c`. `uComH_New.exe` VA `0x0002154c`에 좌표 로그 참조(파일 `0x2e8b0`). | CE에서 정상적인 창 포커스·입력 수신 경로 및 보정된 좌표. |
 | 버튼/차량 인터페이스 | `uComH_New.exe` 파일 `0x2aaa8`에 `MIM1:`. `default.hv` 파일 `0x2b2b6`, `0x2b58e`에 MIM2/MIM1 항목. XIP `omap2430_micommgr_cdp.dll`의 `MIM_IOControl` RVA `0x3af0`와 read/write export 확인. | 사용자 버튼 매핑 및 물리 전송 계층, CAN 직접 접근 가능성은 미확인이다. 차량 입력은 벤치에서 OEM 상태를 관찰해 확인한다. |
 
-800×480을 계산용으로 적용하면 YUV420 한 면에 576,000 B, RGBA 한 면에 1,536,000 B가 든다. YUV 3장과 RGBA 2장만으로 약 4.58 MiB이며 코덱 상태, 참조 프레임, USB, TLS 및 OEM UI 메모리는 별도다. 기기의 실제 메모리 한도는 [벤치 기준](PHASE2_IMPLEMENTATION_PLAN.md)으로 검증한다.
+800×480을 계산용으로 적용하면 YUV420 한 면에 576,000 B, RGBA 한 면에 1,536,000 B가 든다. YUV 3장과 RGBA 2장만으로 약 4.58 MiB이며 코덱 상태, 참조 프레임, USB, TLS 및 OEM UI 메모리는 별도다. 기기의 실제 메모리 한도는 [벤치 기준](../archive/PHASE2_IMPLEMENTATION_PLAN.md)으로 검증한다.
 
 순정 `.061`의 `lVideoGetRearViewStatus`는 `LibVideo.dll` VA `0x1013fc`에서 라이브러리 상태 `0x10b110 + 0x18`을 읽는다. `GDdmedia.exe`와 `LibSystem.dll`은 `lVideoSetRearviewStatus`와 `lVideoShowRearView`를 가져온다. `GDdmedia.exe`는 `lVideoSetVideoAuthority`도 사용한다. 투사 감독기가 후진 상태를 받으려면 이 순정 상태를 관리하는 쪽에서 전달해야 한다. 별도 CE 프로세스가 DLL을 자체 로드해 읽은 값이 순정 프로세스의 상태를 공유하는지는 확인되지 않았다.
 
