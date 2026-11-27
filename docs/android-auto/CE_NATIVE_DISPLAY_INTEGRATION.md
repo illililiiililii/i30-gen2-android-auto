@@ -2,23 +2,23 @@
 
 ## 메뉴와 창 계층
 
-내비 메뉴의 Android Auto 버튼은 터치 누름과 떼기를 순정 경로정보 처리 전에 가로챈다. 떼기에서 `GDdNavi.exe`가 같은 프로세스에 `i30nav.dll`을 로드하고 `I30ToggleProjection(MSG.hwnd)`를 호출한다. 모듈은 해당 HWND의 최상위 소유 창을 찾고 800×480 클라이언트 영역인지 확인한다. 새 투사 창은 지도와 같은 프로세스 및 UI 스레드에 속한 모델리스 팝업이다. USB 대기와 정리는 별도 작업 스레드에서 진행한다. [메뉴 트램펄린](../src/ce/gd13my_aa_menu.S) · [WinCE C++ 구현](../src/ce/ce_aa_native_display.cpp)
+내비 메뉴의 Android Auto 버튼은 터치 누름과 떼기를 순정 경로정보 처리 전에 가로챈다. 떼기에서 `GDdNavi.exe`가 같은 프로세스에 `i30nav.dll`을 로드하고 `I30ToggleProjection(MSG.hwnd)`를 호출한다. 모듈은 해당 HWND의 최상위 소유 창을 찾고 800×480 클라이언트 영역인지 확인한다. 새 투사 창은 지도와 같은 프로세스 및 UI 스레드에 속한 모델리스 팝업이다. USB 대기와 정리는 별도 작업 스레드에서 진행한다. [메뉴 트램펄린](../../src/ce/gd13my_aa_menu.S) · [WinCE C++ 구현](../../src/ce/ce_aa_native_display.cpp)
 
 `GetWindow(map, GW_HWNDPREV)`로 지도 바로 위의 HWND를 얻고 이 창 뒤에 투사 창을 삽입한다. `SWP_NOACTIVATE | SWP_NOOWNERZORDER`로 배치하고 `GetWindow(projection, GW_HWNDNEXT) == map`을 확인한 뒤 표시한다. 일반 창들의 기존 순서를 이용하고, 그 순서를 확인할 수 없으면 투사 창을 숨긴다. WinCE에서는 위치·크기 설정과 표시·숨김 호출을 분리한다. [SetWindowPos](https://learn.microsoft.com/en-us/previous-versions/windows/embedded/aa453662%28v%3Dmsdn.10%29) · [GetWindow](https://learn.microsoft.com/en-us/previous-versions/windows/embedded/aa453178%28v%3Dmsdn.10%29)
 
 ## 순정 표시 상태 연결
 
 1. 서로 다른 HWND로 표시되는 시스템 팝업이나 OSD는 투사보다 위에 놓인 순정 창으로 남긴다. 영상 출력은 `GetDCEx(projection, 0, DCX_CACHE | DCX_CLIPSIBLINGS)`로 상위 HWND가 덮은 영역을 제외한다. [GetDCEx](https://learn.microsoft.com/en-us/previous-versions/windows/embedded/ms929228%28v%3Dmsdn.10%29)
-2. .061 `LibSystem.dll`의 SYS `0x95` 처리 경로가 순정 후방 비트를 읽는다. 후진 진입 처리 전에 표시 허가 이벤트를 리셋하고, 유효한 중립 샘플을 처리해 순정 후방 상태와 표시 래치가 모두 0이면 이벤트를 설정한다. 첫 샘플을 받기 전에는 투사 창을 숨긴다. [순정 이벤트 코드](../src/ce/gd13my_display_events.S)
+2. .061 `LibSystem.dll`의 SYS `0x95` 처리 경로가 순정 후방 비트를 읽는다. 후진 진입 처리 전에 표시 허가 이벤트를 리셋하고, 유효한 중립 샘플을 처리해 순정 후방 상태와 표시 래치가 모두 0이면 이벤트를 설정한다. 첫 샘플을 받기 전에는 투사 창을 숨긴다. [순정 이벤트 코드](../../src/ce/gd13my_display_events.S)
 3. `LibVideo.dll`은 순정 `lVideoShowRearView`가 시작되기 전 후방 표시 이벤트를 설정한다. 순정 종료 경로가 0을 반환한 뒤 이벤트를 리셋한다. 투사 UI와 USB 영상 출력 모두 표시 허가와 후방 표시 이벤트를 확인한다. 실제 카메라 합성 해제 타이밍과 동일 HWND 안에서 합성되는 공조·볼륨 OSD는 차량 벤치 확인이 남아 있다. [순정 분석](VIDEO_AUDIO_ANALYSIS.md)
 4. 순정 `GDdNavi.exe`는 `NaviMainFrame`을 만들 때 확장 창 스타일에 0을 전달하고, 생성 직후 800×480으로 배치한다. 런타임에서는 메뉴 입력 HWND의 루트가 이 지도 창인지 확인한다. 순정 뒤로 가기 또는 지도 버튼에서 투사를 끝내려면 해당 순정 이벤트 처리기가 투사 HWND에 `WM_CLOSE`를 전달한다. 투사 창만 숨기고 USB 작업 취소 이벤트를 알린다.
 
 ## 800×480 영상과 검증
 
-- 영상 서비스와 H.264 Baseline 디코더의 800×480 프로필을 유지한다. 크롭은 디코더가 제공한 원본 좌표를 사용한다. BGRA DIB는 코딩 가로 픽셀 × 4바이트 행 크기와 음수 높이로 전달하고, 800×480 WinCE 클라이언트 DC에 그린다. LCD 픽셀을 읽는 코드는 격리 검증에 한정한다. 통합용 USB DLL은 `--virtual-lcd-bench` 없이 빌드한다. [영상 코드](../src/ce/ce_aa_video.c) · [투사 DC 코드](../src/ce/ce_aa_projection.c)
+- 영상 서비스와 H.264 Baseline 디코더의 800×480 프로필을 유지한다. 크롭은 디코더가 제공한 원본 좌표를 사용한다. BGRA DIB는 코딩 가로 픽셀 × 4바이트 행 크기와 음수 높이로 전달하고, 800×480 WinCE 클라이언트 DC에 그린다. LCD 픽셀을 읽는 코드는 격리 검증에 한정한다. 통합용 USB DLL은 `--virtual-lcd-bench` 없이 빌드한다. [영상 코드](../../src/ce/ce_aa_video.c) · [투사 DC 코드](../../src/ce/ce_aa_projection.c)
 - 기존 가상 폰 격리 시험은 800×480에서 H.264 프레임 수신 확인 1회와 LCD의 빨간 픽셀 3점을 기록했다. 기존 순정 소유 대화상자 시험은 포그라운드를 얻지 못했다. 두 결과를 순정 메뉴에서의 투사 완료로 간주할 수 없다. [격리 시험](../build/gd13my-virtual-lcd/standalone/virtual-phone.json) · [이전 순정 창 시험](../build/gd13my-ce-owned-window/guest-owner/virtual-phone.serial.log)
 - 순정 게스트 통합 시험에서 동의 처리, 내비 메뉴 생성과 실제 터치, 표시 허가, 지도 바로 위의 투사 창 배치, 가상 폰과의 USB 버전 교환 및 TLS 상호 인증을 확인했다. WinCE가 800×480 H.264 시험 프레임을 그리고 프레임을 확인 응답했으며, LCD 세 지점에서 RGB `255,0,0`을 읽었다. 시험 중 순정 지도를 전면에 표시한 첫 NAVIMENU 입력 뒤 두 번째 NAVIMENU 입력을 전달했다. [통합 결과](../build/gd13my-native-oem-screen/stock-menu-full-boot/virtual-phone.json) · [WinCE 로그](../build/gd13my-native-oem-screen/stock-menu-full-boot/virtual-phone.serial.log)
-- 이 후보의 USB 드라이버는 `USBDeviceAttach` 안에서 영상 시험을 최대 20초 동안 실행한다. 지속 투사에는 순정 USB 분리 통지와 파이프 정리 순서에 맞춘 세션 소유권이 필요하다. [CE 포팅 상태](CE_PORTING_STATUS.md)
+- 이 후보의 USB 드라이버는 `USBDeviceAttach` 안에서 영상 시험을 최대 20초 동안 실행한다. 지속 투사에는 순정 USB 분리 통지와 파이프 정리 순서에 맞춘 세션 소유권이 필요하다. [CE 포팅 상태](../archive/CE_PORTING_STATUS.md)
 - 통합 시험에서는 순정 메뉴 터치 → 모듈 로드 → 800×480 HWND 생성 → 상대 순서 → 영상 프레임 수신과 LCD 표시를 함께 확인한다. 순정 지도가 GLES나 별도 플레인으로 직접 합성된다면 HWND 순서가 LCD에 반영되는지 확인하고, 필요하면 순정 표시 권한 API를 연결한다. 후방·팝업·공조·볼륨을 각각 켰다 끄고, 후진과 OSD가 겹치는 경우도 확인한다. 대기 중 지도 복귀와 USB 분리 시에는 투사 창만 닫히고 순정 UI가 계속 응답해야 한다.
 
 ## 에뮬레이터 빌드
