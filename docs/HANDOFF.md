@@ -1,8 +1,8 @@
 # 최신 인계 진입점
 
 1. [PROJECT_STATUS](PROJECT_STATUS.md)와 [NEXT_TASKS](NEXT_TASKS.md)를 읽는다.
-2. 현재 git status 및 최신 커밋을 확인한다. 이 문서의 기준은 b912009이며 이후 변경이 우선한다.
-3. 자동 실행 v8의 실제 실행 명령 및 인증 절차: [AARE 인계](android-auto/aare/FINAL_HANDOFF.md).
+2. 현재 git status 및 최신 커밋을 확인한다. v8 실폰 시험은 `f004f6f` 소스와 기존 v8 이미지를 사용했다. [실폰 재연결 시험](testing/AARE_PHYSICAL_USB_RECOVERY.md)
+3. P0 시험 이미지는 `build/p0-usb-repro/recovery-build/gd13my-aa-autostart-p0.img`다. 별도 DiskA 상태 파일을 사용한다. 재시동 후 기존 AOA 장치의 버전 요청이 타임아웃되면 지도 상태에서 폰 케이블을 물리적으로 다시 연결한다. [실행 명령과 인증 절차](android-auto/aare/FINAL_HANDOFF.md)
 4. 성능·DSP·GPU 작업: [가속 인계](hardware/hardware-acceleration/FINAL_HANDOFF.md).
 5. 새 환경의 로컬 입력과 과거 재현 명령: [기존 세션 인계](archive/SESSION_HANDOFF.md). 상태 설명은 역사적 기록이다.
 6. 후속 기술 조사 및 시험 산출물 (2026-11-27):

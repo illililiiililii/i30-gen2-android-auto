@@ -7,6 +7,7 @@
 - [현재 상태](PROJECT_STATUS.md)
 - [다음 작업](NEXT_TASKS.md)
 - [최신 인계](HANDOFF.md)
+- [v8 실폰 USB 재연결 시험](testing/AARE_PHYSICAL_USB_RECOVERY.md)
 - [AARE H.264 디코더 최적화 결과](android-auto/aare/H264_OPTIMIZATION_RESULTS.md)
 - [AARE YUV420 → RGB565 직접 변환 결과](android-auto/aare/RGB565_OPTIMIZATION_RESULTS.md)
 

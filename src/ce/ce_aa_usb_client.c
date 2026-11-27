@@ -329,7 +329,7 @@ static int write_tls(void *opaque, const uint8_t *data, unsigned size)
 }
 #endif
 
-static int negotiate(UsbLink *link, CE_HANDLE device, const UsbInterface *interface)
+static int negotiate(UsbLink *link, CE_HANDLE device, const UsbInterface *interface, int *accepted)
 {
     const uint8_t *input = 0, *output = 0;
     unsigned i;
@@ -358,6 +358,8 @@ static int negotiate(UsbLink *link, CE_HANDLE device, const UsbInterface *interf
     if (link->input) {
         link->output = link->api->open_pipe(device, output);
         if (link->output) {
+            /* USBD owns attachment and removal separately from the AAP session result. */
+            *accepted = 1;
             success = i30_aa_negotiate_version(&wire, &minor) == I30_WIRE_OK && minor >= 6U;
 #ifdef I30_NATIVE_TLS
             if (success) {
@@ -412,7 +414,6 @@ int USBDeviceAttach(CE_HANDLE device, const UsbFunctions *api, const UsbInterfac
     const UsbDevice *info;
     uint32_t vendor, product;
     UsbLink link;
-    int success = 0;
     (void)driver;
     (void)settings;
     (void)unused;
@@ -442,15 +443,14 @@ int USBDeviceAttach(CE_HANDLE device, const UsbFunctions *api, const UsbInterfac
 #endif
     if (running(link.stop) && vendor == I30_SAMSUNG && product == I30_SAMSUNG_MTP &&
         !interface && no_storage(info)) {
-        success = start_accessory(&link, device);
+        *accepted = start_accessory(&link, device);
     } else if (running(link.stop) && vendor == I30_GOOGLE &&
                (product == I30_AOA_DATA || product == I30_AOA_ADB_DATA) &&
                interface && interface->descriptor[2] == 0U) {
         signal_status(I30_AA_SWITCH);
-        success = negotiate(&link, device, interface);
+        int success = negotiate(&link, device, interface, accepted);
         signal_status(success ? I30_AA_READY : I30_AA_FAILURE);
     }
     CloseHandle(link.stop);
-    *accepted = success;
-    return success;
+    return *accepted;
 }

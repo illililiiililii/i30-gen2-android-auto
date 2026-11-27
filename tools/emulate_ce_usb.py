@@ -1839,7 +1839,10 @@ def main():
     assert client['switch']['accepted'] and client['switch']['controls'] == [51, 52, 52, 52, 52, 53]
     assert client['version']['accepted'] and client['version']['signals'] == ['Switch', 'Ready']
     assert client['version']['inputs'] == ['00030006000100010006']
-    assert all(not result['accepted'] for name, result in client.items() if name not in ('switch', 'version'))
+    for case in ('timeout', 'version-disconnect'):
+        assert client[case]['accepted'] and client[case]['signals'] == ['Switch', 'Failure']
+    assert all(not client[case]['accepted'] for case in ('not-armed', 'storage', 'unsupported', 'wrong-interface',
+                                                        'second-pipe-fails'))
     assert client['timeout']['wait_ms'] == 3000 and client['timeout']['closed_transfers'] == 1
     settings = {case: Settings(args.artifacts / 'i30aa.exe', case).start()
                 for case in ('version-ok', 'version-failed', 'timeout', 'no-accessory-reenumeration', 'usb-auto', 'wake',

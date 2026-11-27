@@ -9,7 +9,7 @@ from unittest.mock import Mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 
 from gd13my_projection import Projection, ProjectionSurface
-from gd13my_musb import UsbTransferPending
+from gd13my_musb import UsbTransferError, UsbTransferPending
 from gd13my_usb_pc import PhonePort, VERSION_REQUEST
 from view_gd13my import WindowedRun
 from i30_receiver.audio import AudioMixer, Microphone
@@ -18,7 +18,7 @@ from i30_receiver.mock import (ACCESSORY, MockCapture, MockPlayback, MockUsb, PO
                                mock_client, synthetic_h264, test_identity)
 from i30_receiver.platform import Platform
 from i30_receiver.session import SessionManager
-from i30_receiver.transport import AoaTransport, Device, InterfaceNotReady
+from i30_receiver.transport import AoaTransport, Device, InterfaceNotReady, Timeout
 
 try:
     import av
@@ -61,7 +61,8 @@ class Gd13myProjectionTests(unittest.TestCase):
         port.device, port.raw, port.config = Mock(), port.link.device, 1
         port.link.input_endpoint, port.link.output_endpoint = 0x81, 0x01
         port.bulk_reader = port.bulk_input = None
-        port.exchange = Mock(return_value=len(VERSION_REQUEST))
+        port.backend = Mock()
+        port.backend.invoke.return_value = len(VERSION_REQUEST)
         port.read_bulk_packet = Mock(side_effect=(VERSION_RESPONSE[:7], VERSION_RESPONSE[7:]))
         port.write(0x01, VERSION_REQUEST)
         self.assertIsNone(port.take_projection_link())
@@ -74,6 +75,24 @@ class Gd13myProjectionTests(unittest.TestCase):
         port.controller.set_cable.assert_called_once_with(False)
         self.assertEqual(port.next_poll, float('inf'))
         link.close.assert_not_called()
+
+    def test_version_write_timeout_reports_physical_replug_and_discards_old_response(self):
+        port = PhonePort.__new__(PhonePort)
+        port.link, port.backend, port.notify = Mock(), Mock(), Mock()
+        port.device, port.config = Mock(), 1
+        port.link.output_endpoint = 0x01
+        port.version_input, port.version_packet = bytearray(), VERSION_RESPONSE
+        port.backend.invoke.side_effect = Timeout('USB I/O timed out')
+
+        with self.assertRaisesRegex(UsbTransferError, 'USB I/O timed out'):
+            port.write(0x01, VERSION_REQUEST)
+
+        message, = port.notify.call_args.args
+        self.assertIn('WinCE Android Auto 버전 요청', message)
+        self.assertIn('휴대폰 USB 케이블을 뺐다가 다시 연결하세요', message)
+        self.assertIsNone(port.version_input)
+        self.assertIsNone(port.take_projection_link())
+        port.link.close.assert_not_called()
 
     def test_pending_physical_read_does_not_wait_on_the_guest_thread(self):
         ready = Event()

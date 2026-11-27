@@ -1,0 +1,50 @@
+# v8 실폰 USB 재연결 확인 — 2026-11-27
+
+`f004f6f` 소스의 뷰어, .061 WinCE, `gd13my-aa-autostart-v8/gd13my-aa-autostart.img`, 삼성 실폰과 기존 AARE 인증서로 같은 USB 포트에서 시험했다. 이미지의 `/i30auto.opt`와 `/i30boot.opt`는 모두 활성 상태였다.
+
+| 조건 | 실폰 결과 |
+|---|---|
+| 문제 세션 | 처음부터 `18d1:2d01`을 열어 WinCE 설명자와 구성 1을 처리했다. 첫 Bulk OUT은 타임아웃됐다. 뒤이은 `04e8:6860` 연결은 호스트까지 확인했고 WinCE의 설명자 요청은 관찰하지 못했다. |
+| 새 세션, 부팅 전에 일반 USB 모드의 폰 연결 | 순정 지도 뒤 guest receiver 한 번 시작. AOA 2 → `18d1:2d01` 재열거 → AAP 1.7 → TLS 1.2 상호 인증 → 서비스 탐색 → 첫 프레임. 왼쪽 아래 런처를 눌러 실폰 앱 목록으로 전환했다. |
+| 물리 분리와 재연결 | WinCE 영상 출력권 해제와 순정 지도 복귀 확인. 같은 포트에 재연결한 뒤 새 AOA 전환과 인증, 첫 프레임을 확인했다. |
+| 연결을 유지한 채 같은 창에서 시동 끄기·켜기 | 이전 뷰어는 USB 핸들을 반환했다. 새 게스트는 이미 액세서리 모드인 폰의 인터페이스와 설명자를 열었고 첫 Bulk OUT이 다시 타임아웃됐다. |
+| 타임아웃 이후 같은 게스트에서 물리 재연결 | 3초 정도 분리 후 같은 포트에 연결했다. 일반 USB 모드에서 AOA 2와 재열거를 거쳐 AAP 1.7, TLS 1.2, 서비스 탐색, 첫 프레임이 다시 성공했다. |
+| 기존 v8 DLL에서 지연 재연결 | Windows가 `04e8:6860`을 열었지만 WinCE 설명자 요청이 없었다. 뷰어의 가상 USB 재연결도 같은 상태였다. |
+| 새 DLL, 버전 OUT 타임아웃 주입 후 실폰 재연결 | 첫 AAP Version Request 쓰기에 타임아웃을 한 번 주입했고 즉시 원래 USB 전송 경로를 복원했다. 이후 WinCE가 실폰의 일반 USB 설명자를 다시 읽었다. 최종 물리 재연결에서 AOA 2, AAP 1.7, TLS 1.2 상호 인증, 서비스 탐색과 첫 프레임이 성공했다. 케이블을 빼자 순정 지도로 복귀했다. |
+
+재현 조건은 **시동 사이에 물리 폰이 기존 AOA 모드를 유지하는 경우**다. 실패 위치는 AAP 응답을 받기 전 호스트의 Bulk OUT이다. 기존 세션의 Windows 장치 열기 및 WinCE USB 열거까지는 성공했다. ADB 서버나 중복 뷰어는 관찰되지 않았다. 실행기와 자식 Python은 뷰어 하나의 프로세스 트리였다. Android 내부에서 OUT을 수신하지 못한 이유와 사용자가 처음 본 오류의 정확한 문구는 확인하지 못했다. USB 기능 요청 `00/03/0003`, `00/03/0004`의 pipe error는 성공 연결에도 있었다.
+
+지연 재연결 실패의 WinCE 로그에는 `TxCSR_H_Error at EP 1`, `No Driver Found`, `!USBD: Could not load driver for attached device`가 순서대로 있었다. 실행 중 레지스터 스냅샷에서 가상 케이블은 연결됐고 `DEVCTL=0`, `INTRUSBE=0`, IRQ 92 경로 비활성을 관찰했다. 이 상태에서는 가상 포트를 다시 연결해도 게스트가 설명자 요청을 시작하지 않았다. 스냅샷은 `build/p0-usb-repro/live-musb.json`에 있다.
+
+`ce_aa_usb_client.c`는 지원 액세서리 인터페이스의 두 Bulk 파이프를 열면 USB 인터페이스를 인수한다. 이후 AAP 버전 교환이 실패하면 기존 `Failure` 이벤트를 보내고 파이프와 전송을 정리한다. 확인하지 못한 인터페이스와 파이프 열기 실패는 기존처럼 거부한다. [Windows CE USBDeviceAttach API](https://learn.microsoft.com/en-us/previous-versions/windows/embedded/ms923216%28v%3Dmsdn.10%29)
+
+새 DLL의 주입 시험에서는 동일한 `TxCSR_H_Error at EP 1`을 관찰했고 USBD 드라이버 로드 실패는 기록되지 않았다. 게스트의 후속 설명자 요청과 실제 재인증을 확인했다. 이미 액세서리 모드인 폰을 꽂은 채 시동을 다시 켤 때 최초 타임아웃을 자동으로 피하는 동작은 남아 있다.
+
+뷰어는 AAP Version Request 쓰기가 타임아웃되면 해당 단계와 물리 재연결 안내를 표시하고, 새 버전 요청 시 이전 응답 추적을 비운다. Windows 허브 포트의 전원 재설정에는 관리자 권한이 필요하며 이 세션은 비관리자였다. [Windows USB 포트 재설정 요구사항](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/usbioctl/ni-usbioctl-ioctl_usb_hub_cycle_port)
+
+## 실행 이미지와 산출물 대조
+
+DiskA를 읽기 전용으로 열어 SHA-256을 비교했다. 아래 값은 앞 16자리다. v8 이미지의 세 바이너리는 동봉된 `ce/` 빌드와 일치했다. 이전 실폰 연결 성공 이미지와 공개 인증서, AARE 설정 및 등록 피어 pin이 일치했다.
+
+| 바이너리 | v8 실행 이미지 | `h264-final-baseline` 및 `aare-bgra-compare` | 이전 실폰 성공 이미지 |
+|---|---|---|---|
+| `i30usb.dll` | `dc2e2934987f1e72` | `8546bb15e0b84e68` | `54da76f655ce50ed` |
+| `i30nav.dll` | `bcd1ea832b1fef7b` | `bcd1ea832b1fef7b` | `fcb1e02c07138ede` |
+| `i30aa.exe` | `d9ffb37d1ae2b109` | `d9ffb37d1ae2b109` | `36140002b83c486c` |
+
+`f004f6f`의 ARMv4T/-Os, BGRA 기본 빌드와 그 직전 BGRA 비교 빌드는 세 모듈 모두 동일하다. v8 `i30usb.dll`은 v7 이미지와 같은 USB 클라이언트다. `f004f6f`의 공통 링커·재배치 변경으로 생성한 DLL을 v8 실행 이미지가 로드했다는 근거는 없다. Cortex-A8, fast-copy 및 NEON 프리셋은 이번 실폰 비교 대상에서 제외했다.
+
+후속 시험 이미지 `build/p0-usb-repro/recovery-build/gd13my-aa-autostart-p0.img`는 v8에서 `i30usb.dll`만 교체했다. 새 DLL SHA-256은 `4bccda24efc0e747a17ff95fc7bf9c877ded2331c1a7fc3d86c95afa1f693b5b`다. 같은 빌드에서 생성한 `i30nav.dll`과 `i30aa.exe`는 v8 파일과 바이트 단위로 일치했다.
+
+## 재현 기록
+
+- 원래 실패는 `build/gd13my-aa-autostart-v8/live-final/gd13my-window-20261127-123743-477720.*.log`에 있다.
+- 부팅과 실폰 분리·재연결은 `build/p0-usb-repro/v8/gd13my-window-20261127-133451-486372.*.log`에 있다.
+- 시동 때 기존 AOA로 시작한 실패 및 물리 재연결 복구는 같은 디렉터리의 `gd13my-window-20261127-133940-973236.*.log`에 있다.
+- 타임아웃 안내와 기존 v8 DLL의 지연 재연결 실패는 `build/p0-usb-repro/recovery/gd13my-window-20261127-134412-796226.*.log`에 있다.
+- 새 DLL의 주입 시험과 실폰 복구는 `build/p0-usb-repro/candidate/gd13my-window-20261127-140009-116428.*.log`에 있다. 시작 시 새 DiskA 상태 파일이 필요하다. 이전 v8 이미지의 상태 파일은 이미지 식별자가 다르다.
+- 실행 옵션은 AARE 인계를 따른다. 이 시험은 `-UsbPort auto`, `-Seconds 86400`, `-GuestClockMHz 4.5`, `-UsbClockMHz 12` 및 보존 상태 복제본을 사용했다. [실행 절차](../android-auto/aare/FINAL_HANDOFF.md)
+
+관련 Python 시험 10개가 통과했다. 전체 회귀는 98개 중 97개 통과, 네이티브 GPTimer DLL 환경 조건으로 1개 건너뜀이다. 새 DLL의 ARM fixture는 AAP 타임아웃 및 버전 도중 분리에서 USB 인터페이스 인수와 AAP `Failure` 이벤트, 파이프 정리를 함께 확인했다. 버전 성공, 설정, TLS, 투사 및 순정 터치 경로도 통과했다. 원본은 `build/p0-usb-repro/unittest-candidate.log`와 `arm-candidate-regression.json`이다.
+
+실폰 시험에서 두 자동 실행 옵션을 각각 켠 구성, 둘 다 끈 구성, 후방카메라 선점 및 비정상 프로세스 종료 복구는 미검증이다. 순정 부팅 경고 동의 입력은 약 2초에 자동으로 발생하지 않았다. 이전 시험판에서 자동 동의가 제거된 기록이 있다. [부팅 경고 이력](PHASE7_8_RESULTS.md)

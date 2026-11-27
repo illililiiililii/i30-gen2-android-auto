@@ -231,13 +231,23 @@ class PhonePort:
         link = self.accessory_link()
         if address != link.output_endpoint:
             raise UsbTransferError('Unknown accessory output endpoint')
-        written = self.exchange('USB bulk 출력', link.device.write, address, data, timeout=500)
+        version_request = data == VERSION_REQUEST
+        label = f'WinCE Android Auto 버전 요청 · 엔드포인트 {address:#04x}' if version_request else 'USB bulk 출력'
+        if version_request:
+            self.version_input = self.version_packet = None
+        try:
+            written = self.backend.invoke(link.device.write, address, data, timeout=500)
+        except TransportError as error:
+            if version_request and isinstance(error, Timeout):
+                self.notify(f'{label} 실패 · {error} · 휴대폰 USB 케이블을 뺐다가 다시 연결하세요')
+                raise UsbTransferError(str(error)) from error
+            self.transfer_failed(label, error)
         if written != len(data):
+            self.notify(f'{label} 실패 · {len(data)}바이트 중 {written}바이트만 전송됨')
             raise UsbTransferError('Short USB bulk write')
-        if data == VERSION_REQUEST:
+        if version_request:
             self.version_input = bytearray()
-            self.version_packet = None
-            self.trace(f'WinCE Android Auto 버전 요청 · 엔드포인트 {address:#04x}')
+            self.trace(label)
 
     def read(self, address, size):
         link = self.accessory_link()
