@@ -2,10 +2,10 @@
 
 현재 우선순위는 에뮬레이터와 AARE 기능 개선이다. 실제 펌웨어 기록은 별도 안전 검증 전 금지한다.
 
-1. v8 실폰 자동 연결: 두 옵션 개별/동시, 최초 승인, 첫 프레임, 분리·재연결, 시동 재시작. 일반 USB 장치와 순정 화면 복귀도 확인. [실행](android-auto/aare/FINAL_HANDOFF.md).
-2. 티맵 분할 화면: 사용자 보고 증상을 재현하고 전체/분할 화면, 네이버 지도 대조, AAP 화면 영역·DPI·영상 자체와 합성 결과를 분리한다. 원인 단정 금지.
-3. AARE 영상 성능: H.264, 색변환, 복사, LCD, ARM 처리량을 분리 계측. 순정 영상 후처리/오버레이 및 DSP ABI를 검증한 뒤 적용. [DSP](hardware/hardware-acceleration/DSP_IOCTL_ABI.md).
-4. 실제 지도 성능: 동일 이미지·입력 반복 측정, 모의 주행과 1/3/5분 지속 시험. 정지 갱신을 FPS로 환산하지 않는다. [벤치](hardware/hardware-acceleration/REAL_MAP_BENCHMARK.md).
+1. v8 실폰 자동 연결: 가상 연결 완료 후 실폰 사용자 터치 승인, 첫 프레임, 분리·재연결, 시동 재시작 실폰 확인. [검증 보고](testing/AARE_AUTOSTART_VALIDATION.md).
+2. 티맵 분할 화면: VideoConfiguration 내 Insets 미제공 분석 완료. 향후 AAP UiConfig(Content Insets) 패킷 추가 및 DPI 변경 시험. [티맵 증거](android-auto/aare/TMAP_DISPLAY_EVIDENCE.md).
+3. AARE 영상 성능: 8단계 인벤토리 기반 YUV->BGRA 이중 변환 제거 및 DirectDraw 서피스 연결 검토. 순정 DSP 556B 구조체 런타임 프로빙 후 적용. [DSP 증거](hardware/hardware-acceleration/DSP_INTERFACE_EVIDENCE.md), [파이프라인](android-auto/aare/VIDEO_PIPELINE_INVENTORY.md).
+4. 실제 지도 성능: 동일 조건 3회 반복 벤치마크 완료 (GDI vs WGL 리드백 병목 입증). [벤치마크](testing/EMULATOR_REPEATED_BENCHMARK.md).
 5. 실기 재현: 장치별 실측 기준 확보 후 ±5% 평가. 고성능 모드와 실기 재현 모드를 구분한다.
 6. 실차 빌드 전: 보드 식별, 쓰기 범위, 원본 백업, 독립 복구, 업데이트 실패 검증. [안전](safety/PHASE6_BRICK_RISK_ASSESSMENT.md).
 

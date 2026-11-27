@@ -13,7 +13,10 @@
 | 회귀시험 | 보고상 93개 통과, 1개 skip (원문 표기) | [진행 기록](android-auto/aare/PROGRESS.md) |
 | GPU | WGL 선택 경로; readback 때문에 GDI 기본 유지 | [실지도 벤치](hardware/hardware-acceleration/REAL_MAP_BENCHMARK.md) |
 | GPTimer | 전체 guest 처리량 +7.7%, 지도 구간 +0.9%; 체감 개선 미입증 | [실지도 벤치](hardware/hardware-acceleration/REAL_MAP_BENCHMARK.md) |
-| DSP | VID1/DSP1 문자열·export 확인, IOCTL ABI 미입증; h264bsd 유지 | [DSP ABI](hardware/hardware-acceleration/DSP_IOCTL_ABI.md) |
+| DSP | VID1/DSP1 IOCTL 코드(0x00220808 등 22개), 556B 입력 버퍼 확인, 상세 ABI 미입증; h264bsd 유지 | [DSP 증거](hardware/hardware-acceleration/DSP_INTERFACE_EVIDENCE.md) |
+| 영상 파이프라인 | 8단계 인벤토리 정리(USB-TLS-AAP-H264-색변환-복사-출력), BGRA 변환 병목 식별 | [파이프라인](android-auto/aare/VIDEO_PIPELINE_INVENTORY.md) |
+| 자동 연결 | v8 가상/에뮬레이터 독립 옵션·동시 활성화·첫 프레임·분리 복귀 PASS, 실폰 미검증 | [자동 실행 검증](testing/AARE_AUTOSTART_VALIDATION.md) |
+| 티맵 분할 | VideoConfiguration/Insets(미제공) 대조 완료, 800x480 DPI 및 UI Insets 영향 분석 | [티맵 증거](android-auto/aare/TMAP_DISPLAY_EVIDENCE.md) |
 | 실차 ±5% | 실측 기준 없음 | [가속 인계](hardware/hardware-acceleration/FINAL_HANDOFF.md) |
 | 실차 설치 | 승인되지 않음; 복구 경로와 실제 MUSB 동작 미검증 | [실기 점검](android-auto/aare/HARDWARE_READINESS.md), [위험 평가](safety/PHASE6_BRICK_RISK_ASSESSMENT.md) |
 

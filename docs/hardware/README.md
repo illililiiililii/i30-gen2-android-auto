@@ -4,6 +4,7 @@
 
 - [hardware-acceleration/AARE_HARDWARE_DECODING.md](hardware-acceleration/AARE_HARDWARE_DECODING.md)
 - [hardware-acceleration/BRICK_PREVENTION_NOTES.md](hardware-acceleration/BRICK_PREVENTION_NOTES.md)
+- [hardware-acceleration/DSP_INTERFACE_EVIDENCE.md](hardware-acceleration/DSP_INTERFACE_EVIDENCE.md)
 - [hardware-acceleration/DSP_IOCTL_ABI.md](hardware-acceleration/DSP_IOCTL_ABI.md)
 - [hardware-acceleration/EMULATOR_HARDWARE_GAP.md](hardware-acceleration/EMULATOR_HARDWARE_GAP.md)
 - [hardware-acceleration/FINAL_HANDOFF.md](hardware-acceleration/FINAL_HANDOFF.md)
