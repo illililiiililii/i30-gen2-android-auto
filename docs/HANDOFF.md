@@ -4,7 +4,7 @@
 
 1. [PROJECT_STATUS](PROJECT_STATUS.md)와 [NEXT_TASKS](NEXT_TASKS.md)를 읽는다.
 2. 현재 git status 및 최신 커밋을 확인한다. v8 실폰 시험은 `f004f6f` 소스와 기존 v8 이미지를 사용했다. [실폰 재연결 시험](testing/AARE_PHYSICAL_USB_RECOVERY.md)
-3. P0 시험 이미지는 `build/p0-usb-repro/recovery-build/gd13my-aa-autostart-p0.img`다. 별도 DiskA 상태 파일을 사용한다. 재시동 후 기존 AOA 장치의 버전 요청이 타임아웃되면 지도 상태에서 폰 케이블을 물리적으로 다시 연결한다. [실행 명령과 인증 절차](android-auto/aare/FINAL_HANDOFF.md)
+3. P0 시험 이미지는 `build/p0-usb-repro/recovery-build/gd13my-aa-autostart-p0.img`다. 별도 DiskA 상태 파일을 사용한다. 재시동 후 기존 AOA 장치의 버전 요청이 타임아웃되면 지도 상태에서 폰 케이블을 물리적으로 다시 연결한다. 2026-11-28 재실행 로그는 `build/p0-usb-repro/live-fresh-agent/gd13my-window-20261128-235207-387221.*`이며 AOA 2 후 첫 AAP 버전 요청이 USB I/O 오류로 실패했다. 폰에는 Google Android Auto의 `통신 오류 16`이 표시되어 AARE가 아니라 Google AA가 세션을 열었다. Google AA를 종료하고 AARE를 포그라운드로 둔 뒤 재연결한다. [실행 명령과 인증 절차](android-auto/aare/FINAL_HANDOFF.md), [최신 추적](testing/AARE_PHYSICAL_USB_RECOVERY.md#2026-11-28-재실행-aare-세션과-화면의-오류-16)
 4. 성능·DSP·GPU 작업: [가속 인계](hardware/hardware-acceleration/FINAL_HANDOFF.md).
 5. 새 환경의 로컬 입력과 과거 재현 명령: [기존 세션 인계](archive/SESSION_HANDOFF.md). 상태 설명은 역사적 기록이다.
 6. 후속 기술 조사 및 시험 산출물 (2026-11-27):

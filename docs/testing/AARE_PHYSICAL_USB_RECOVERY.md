@@ -36,6 +36,16 @@ DiskA를 읽기 전용으로 열어 SHA-256을 비교했다. 아래 값은 앞 1
 
 후속 시험 이미지 `build/p0-usb-repro/recovery-build/gd13my-aa-autostart-p0.img`는 v8에서 `i30usb.dll`만 교체했다. 새 DLL SHA-256은 `4bccda24efc0e747a17ff95fc7bf9c877ded2331c1a7fc3d86c95afa1f693b5b`다. 같은 빌드에서 생성한 `i30nav.dll`과 `i30aa.exe`는 v8 파일과 바이트 단위로 일치했다.
 
+## 2026-11-28 재실행: AARE 세션과 화면의 `오류 16`
+
+새 DiskA 상태 파일 `build/p0-usb-repro/p0-fresh-agent-user-diska.sqlite3`로 P0 복구 이미지를 다시 실행했다. 로그는 `build/p0-usb-repro/live-fresh-agent/gd13my-window-20261128-235207-387221.*`에 있다. 부팅, 동의 처리, 자동 투사 시작, `i30 USB attach ready`까지 진행됐다. USB 추적에서는 실폰의 일반 USB 모드 `04e8:6860`에서 AOA 2 요청과 START_ACCESSORY를 보냈고, `18d1:2d01` 재열거까지 확인했다. 그 직후 WinCE의 AAP 버전 요청이 엔드포인트 `0x01`에서 `USB I/O failed: [Errno 5] Input/Output Error`로 실패했고, 게스트는 다시 분리·재열거·AOA 전환을 반복했다. `AUTH_COMPLETE`, 서비스 탐색, 첫 프레임, 앱 목록, 터치 이벤트는 아직 없다.
+
+사용자가 확인한 전체 문구는 `android auto에 오류가 발생했습니다. 통신 오류 16 - 문제가 발생했습니다. 휴대전화 연결을 해제한 뒤 다시 연결하세요.`이며 화면 앱은 **Google Android Auto**였다. 즉 이번 세션은 AARE가 아니라 순정 Android Auto 앱이 액세서리 인터페이스를 열고 오류를 표시했다. **VERIFIED**: Google Android Auto 화면과 오류 문구. **UNKNOWN**: 내부 코드 16의 정확한 의미. 이전에도 순정 Android Auto 세션이 USB를 선점해 AARE의 액세서리 열기가 실패한 기록이 있다. [AARE 진행 기록](../android-auto/aare/PROGRESS.md)
+
+AARE도 Google Android Auto와 같은 AOA 2/AAP 초기 전송을 사용하므로 CE 로그의 `WinCE Android Auto 버전 요청` 자체는 두 앱에서 동일하게 나올 수 있다. 그러나 폰 화면까지 확인한 이번 경우는 Google AA가 세션 소유자다. **VERIFIED**된 CE 측 실패 지점은 TLS 이전의 AAP 버전 교환이며, 인증서/P12/TLS 원인으로 넘어갈 근거는 아직 없다.
+
+복구 순서: Google Android Auto를 완전히 닫는다. 필요하면 최근 앱에서 종료하거나 앱 설정에서 강제 종료한다. 그다음 AARE를 열어 포그라운드에 두고, USB 앱 선택 화면이 나오면 AARE를 선택한다. 연결을 해제한 상태에서 뷰어가 켜진 뒤 케이블을 약 3초 분리했다가 같은 포트에 다시 연결한다. 그 후 USB 추적에서 AAP 1.7, TLS 1.2 상호 인증, 서비스 탐색, 첫 프레임이 재개되는지 확인한다. Android Auto가 자동으로 다시 열리면 해당 앱의 자동 시작 설정을 끄고 다시 시도한다.
+
 ## 재현 기록
 
 - 원래 실패는 `build/gd13my-aa-autostart-v8/live-final/gd13my-window-20261127-123743-477720.*.log`에 있다.
