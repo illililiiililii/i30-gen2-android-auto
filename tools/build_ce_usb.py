@@ -188,7 +188,7 @@ def build_bearssl(compiler, source, work, options, run_tool):
 
 def build(compiler, output, bearssl_source=None, h264_source=None, virtual_lcd_bench=False,
           video_format='bgra', codegen='armv4t-os', h264_profile=False, h264_fast_copy=False,
-          aoa_model='Android Auto', aoa_version='1.0'):
+          aoa_model='Android Auto', aoa_version='1.0', aoa_manufacturer='i30 Research'):
     source = ROOT / 'src/ce'
     exports = rom_exports()
     target_flags, decoder_flags = CODEGEN_FLAGS[codegen]
@@ -232,7 +232,8 @@ def build(compiler, output, bearssl_source=None, h264_source=None, virtual_lcd_b
             elf = work / (target + '.elf')
             units = [asm]
             if target == DRIVER:
-                units.extend((f'-DI30_AOA_MODEL="{aoa_model}"', f'-DI30_AOA_VERSION="{aoa_version}"',
+                units.extend((f'-DI30_AOA_MANUFACTURER="{aoa_manufacturer}"',
+                              f'-DI30_AOA_MODEL="{aoa_model}"', f'-DI30_AOA_VERSION="{aoa_version}"',
                               source / unit, source / 'aa_wire.c'))
             else:
                 units.append(source / 'ce_aa_usb_session.c')
@@ -274,6 +275,7 @@ def build(compiler, output, bearssl_source=None, h264_source=None, virtual_lcd_b
             report[target] = inspect(exe, exports)
             report[target]['codegen'] = codegen
             if target == DRIVER:
+                report[target]['aoa_manufacturer'] = aoa_manufacturer
                 report[target]['aoa_model'] = aoa_model
                 report[target]['aoa_version'] = aoa_version
             if video:
@@ -341,6 +343,8 @@ def main():
                         help='AOA model string; AARE v1.6.0 accepts both values; default preserves the stable identity')
     parser.add_argument('--aoa-version', choices=('1.0', '2.0'), default='1.0',
                         help='AOA version string; AARE v1.6.0 ignores it; 2.0 changes the Android default-app key')
+    parser.add_argument('--aoa-manufacturer', default='i30 Research',
+                        help='AOA manufacturer string; AARE v1.6.0 ignores it; changes the Android accessory identity')
     parser.add_argument('output', type=Path)
     args = parser.parse_args()
     if args.h264_source and (not args.bearssl_source or not (args.h264_source / 'src/h264bsd_decoder.h').is_file() or
@@ -348,11 +352,18 @@ def main():
         parser.error('--h264-source needs an h264bsd source tree and --bearssl-source')
     if args.virtual_lcd_bench and not args.h264_source:
         parser.error('--virtual-lcd-bench requires --h264-source')
+    try:
+        manufacturer_bytes = args.aoa_manufacturer.encode('ascii')
+    except UnicodeEncodeError:
+        parser.error('--aoa-manufacturer must be ASCII')
+    if len(manufacturer_bytes) > 35:
+        parser.error('--aoa-manufacturer must fit the 36-byte AOA string buffer')
     report = build(args.compiler.resolve(strict=True), args.output,
                    args.bearssl_source.resolve(strict=True) if args.bearssl_source else None,
                    args.h264_source.resolve(strict=True) if args.h264_source else None, args.virtual_lcd_bench,
                    args.video_format, args.codegen, args.h264_profile, args.h264_fast_copy,
-                   aoa_model=args.aoa_model, aoa_version=args.aoa_version)
+                   aoa_model=args.aoa_model, aoa_version=args.aoa_version,
+                   aoa_manufacturer=args.aoa_manufacturer)
     print(json.dumps(report, indent=2))
 
 

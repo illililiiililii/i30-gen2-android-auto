@@ -34,6 +34,12 @@ def artifact_video_format(path):
     return abi.get(path.name, {}).get('video_format', 'bgra')
 
 
+def artifact_aoa_manufacturer(path):
+    """Read the build-time AOA manufacturer from the ABI report; older artifacts use i30 Research."""
+    abi = json.loads(path.with_name('abi.json').read_text(encoding='utf-8'))
+    return abi.get(path.name, {}).get('aoa_manufacturer', 'i30 Research')
+
+
 def artifact_aoa_model(path):
     """Read the build-time AOA model from the ABI report; older artifacts use Android Auto."""
     abi = json.loads(path.with_name('abi.json').read_text(encoding='utf-8'))
@@ -131,6 +137,7 @@ class UsbClient(Machine):
     def __init__(self, path, case):
         super().__init__(path, base=0x30000000)
         self.case = case
+        self.aoa_manufacturer = artifact_aoa_manufacturer(path)
         self.aoa_model = artifact_aoa_model(path)
         self.aoa_version = artifact_aoa_version(path)
         self.ms = 0
@@ -246,7 +253,8 @@ class UsbClient(Machine):
         elif code == 52:
             assert (kind, flag) == (0x40, 0x100) and 0 <= index < 4
             text = bytes(self.cpu.mem_read(data, size))
-            expected = (b'i30 Research\0', self.aoa_model.encode('ascii') + b'\0',
+            expected = (self.aoa_manufacturer.encode('ascii') + b'\0',
+                        self.aoa_model.encode('ascii') + b'\0',
                         b'i30 GD13MY USB test\0', self.aoa_version.encode('ascii') + b'\0')
             assert text == expected[index]
         else:

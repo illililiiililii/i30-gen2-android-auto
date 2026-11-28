@@ -68,3 +68,9 @@ AARE도 Google Android Auto와 같은 AOA 2/AAP 초기 전송을 사용하므로
 ## 2026-11-29: AOA model `Android Open Automotive Protocol` 이미지 준비
 
 두 번째 단일 변수 후보 `build/aare-auto-connect-oap-image/gd13my-aa-autostart-oap.img`(SHA-256 `34ebac108c5bee41c754a94cac7912e951dd0840581138d5e6ba65f126d8ec46`)를 만들었다. v2와 같은 순정 파일·표시 패치·시작 패치·AARE 신원·자동 실행 옵션을 유지했고, `i30usb.dll`만 `Android Open Automotive Protocol` / version `1.0`(SHA-256 `e8eb02a5eafb205ee418ac071f6ab15ff38160d2ac585ce26837203ef8166c2c`)으로 바꿨다. 매니페스트 `build/aare-auto-connect-oap-image/image.json`의 나머지 해시와 UTC 오프셋은 v8/v2와 같다. ARM projection/stress/navigation fixture와 startup fixture는 종료 코드 0이었다. 신규 상태 DB `build/aare-auto-connect-oap-image/live-user-diska.sqlite3`로 뷰어를 시작했고, 물리 케이블 재연결과 화면 확인을 기다린다. 성공 판정은 AARE TLS 인증, `AUTH_COMPLETE`, 서비스 탐색, 첫 프레임이다.
+
+실폰 재연결 결과는 version 후보와 같았다. `build/aare-auto-connect-oap-image/live/gd13my-window-20261129-020606-027911.usb-host.log`에 `18d1:2d01` 재열거, 기능 요청의 `[Errno 32] Pipe error`, AAP version request의 `[Errno 5] Input/Output Error`가 순서대로 있다. TLS, `AUTH_COMPLETE`, 서비스 탐색, 첫 프레임은 없다. 사용자는 앱 선택 화면이나 화면 변화가 없 보고했다. **VERIFIED**: OAP model도 이 전화에서 pre-TLS 실패. **UNKNOWN**: 세션을 연 앱과 Google AA filter의 정확한 값.
+
+## 2026-11-29: AOA manufacturer 단일 변경 후보
+
+세 번째 후보는 `build/aare-auto-connect-mfg-image/gd13my-aa-autostart-mfg.img`(SHA-256 `ae3390afc9c51a7a160ea5e92868a76f098b41a14a44b814089ed4db2937fd54`)다. model/version은 기본값 `Android Auto`/`1.0`으로 되돌리고 `i30usb.dll`의 manufacturer만 `i30 Research` → `i30 GD13MY AARE`(DLL SHA-256 `46d97934b26cfc0a2a841bb9b6043cc0b7e14f464295f2e6c76d161ba556e390`)로 바꿨다. AARE v1.6.0은 manufacturer를 필터에 쓰지 않아 매칭이 유지되고, Android accessory 기본 앱 키에는 manufacturer가 포함된다는 점을 이용한다. ARM projection/stress/navigation fixture, startup fixture, 전체 Python 회귀 98 run/1 skip/실패 0을 확인했다. 신규 상태 DB `build/aare-auto-connect-mfg-image/live-user-diska.sqlite3`로 뷰어를 시작했고 물리 재연결 입력을 기다린다.
