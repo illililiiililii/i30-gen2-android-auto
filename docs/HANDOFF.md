@@ -16,7 +16,7 @@
    - 작업 F: [AARE H.264 디코더 최적화 결과](android-auto/aare/H264_OPTIMIZATION_RESULTS.md): 내부 함수 프로파일, codegen 비교, opt-in fast-copy. 기본 배포 경로는 그대로 BGRA/ARMv4T이며 NEON과 Cortex-A8은 실험용이다.
 7. 신규 조사·인계 (2026-11-28):
    - [AARE 1.6.0 설치 기록](android-auto/aare/AARE_APK_INSTALL_ATTEMPT.md): 최초 `unauthorized`, 사용자 승인 후 `adb install -r` 성공, 패키지/버전/실행 액티비티 확인, ADB 점유 해제 완료.
-   - [티맵 분할 화면 Upstream 재대조](android-auto/aare/TMAP_DISPLAY_UPSTREAM_CROSSCHECK.md): GD13MY는 margin/insets/ui_config 미전송, `0x8009`를 거부하고 세션 종료. 원인은 미검증.
+   - [티맵 분할 화면 Upstream 재대조](android-auto/aare/TMAP_DISPLAY_UPSTREAM_CROSSCHECK.md): GD13MY는 margin/insets/ui_config 미전송, `0x8009`를 거부하고 세션 종료. 원인은 미검증. 6절에서 AARE 1.6.0의 `0x8009` HU→phone / `0x800A` phone→HU 방향과 GD13MY의 양방향 경로 부재, 회귀시험 결과(관련 39개·전체 98개 통과)를 확인했다. 에뮬레이터 미실행으로 라이브 캡처는 BLOCKED.
    - [UYVY DirectDraw 구현 명세](android-auto/aare/UYVY_DIRECTDRAW_IMPLEMENTATION_SPEC.md): CE6 API 계약, 호출 순서, 실패 처리, 활성화 전 검증 게이트. 기본 경로는 변경하지 않음.
 
 원본 로그와 빌드 이미지는 로컬에 있을 수 있다. 원격에서 존재를 가정하지 않는다. 기존 실행 세션을 확인하고 필요한 경우에만 재부팅한다. 완료 후 최신 시험 이미지를 사용자에게 제공할 때 실폰 연결 가능한 상태와 실행 모드를 명시한다.

@@ -8,6 +8,6 @@ AARE 프로젝트의 다음 작업은 순정 지도 자원과 순정 영상 출�
 4. 물리 USB에서는 새 폰의 AARE 및 등록 인증서 설정 후 첫 영상·터치·분리·재연결을 확인한다. 기존 AOA 상태로 시동할 때의 최초 타임아웃, 자동 실행 옵션 나머지 조합과 실기 카메라·비정상 종료 복구도 남아 있다. [기존 실폰 결과](testing/AARE_PHYSICAL_USB_RECOVERY.md)
 5. 실차 설치 전에는 보드 식별, 쓰기 범위, 원본 백업, 독립 복구, 업데이트 실패를 별도 검증한다. [안전](safety/PHASE6_BRICK_RISK_ASSESSMENT.md)
 6. AARE 1.6.0 설치는 완료됐다. 다음은 사용자가 스마트폰에서 앱을 열고 P12 가져오기와 수신기 지문 승인을 수행한 뒤 첫 영상·터치·분리·재연결을 확인하는 것이다. ADB 점유는 이미 해제했다. [설치 기록](android-auto/aare/AARE_APK_INSTALL_ATTEMPT.md)
-7. 티맵 분할 화면은 가설만 정리됐다. 원인 확정을 위해 discovery의 margin/density/UiConfig, `0x8009`/`0x800A` 트래픽, GD13MY 실제 safe area를 같은 세션에서 캡처한다. 임의 좌표·DPI·인셋 변경으로 해결을 보고하지 않는다. [재대조](android-auto/aare/TMAP_DISPLAY_UPSTREAM_CROSSCHECK.md)
+7. 티맵 분할 화면은 가설만 정리됐다. AARE 1.6.0 기준 `0x8009`는 HU→phone request, `0x800A`는 phone→HU reply임을 확인했고 GD13MY에는 양쪽 경로가 없다. 원인 확정을 위해 discovery의 margin/density/UiConfig, `0x8009`/`0x800A` 트래픽, GD13MY 실제 safe area를 같은 세션에서 캡처한다. 현재 에뮬레이터 미실행으로 라이브 캡처는 BLOCKED이며, 사용자가 직접 열거나 명시적 재실행 허용 시까지 기다린다. 임의 좌표·DPI·인셋 변경으로 해결을 보고하지 않는다. [방향 재확인](android-auto/aare/TMAP_DISPLAY_UPSTREAM_CROSSCHECK.md)
 
 완료 판단은 재현 가능한 시험과 결과를 기준으로 한다. 미검증 항목은 통과 처리하지 않는다.

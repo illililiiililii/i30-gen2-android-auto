@@ -63,3 +63,30 @@
 4. 터치 좌표가 video frame 기준인지 content area 기준인지. 현재 계약은 800×480 전체 좌표이며 변경하지 않는다.
 
 측정 없이 특정 인셋 값을 넣거나 티맵 전용 보정을 추가하지 않는다.
+
+## 6. AARE 1.6.0 방향 계약 재확인 — 2026-11-28
+
+기존 2~4절의 코드 사실은 유지하되, 메시지 방향은 설치된 AARE 1.6.0과 같은 태그의 upstream 소스로 다시 확인했다. `main`이 아니라 `v1.6.0` 태그를 기준으로 삼았다.
+
+| 판정 | 근거 | 확인 내용 |
+|---|---|---|
+| VERIFIED | [AARE v1.6.0 `MessageIds.kt`](https://raw.githubusercontent.com/prototux/AARE/v1.6.0/aap/src/main/kotlin/net/prototux/aare/aap/MessageIds.kt) 38-55행 | `MediaMsg.UPDATE_UI_CONFIG_REQUEST = 0x8009`, `MediaMsg.UPDATE_UI_CONFIG_REPLY = 0x800A`. 같은 숫자 `0x8009`가 `NavStatusMsg.RAW_ROUTE_INFO`로도 정의되어 있으므로, ID 숫자만으로 방향을 판정하지 않고 채널과 메시지 종류를 함께 봐야 한다 |
+| VERIFIED | [AARE v1.6.0 `MediaChannels.kt`](https://raw.githubusercontent.com/prototux/AARE/v1.6.0/aap/src/main/kotlin/net/prototux/aare/aap/channels/MediaChannels.kt) 429-449행 | `VideoChannel.onOtherMessage()`가 video 채널의 `0x8009`를 `UpdateUiConfigRequest`로 파싱해 `onUiConfigRequest()`로 넘긴다. 수신한 `0x800A`는 no-op이다 |
+| VERIFIED | 동일 파일 337-342, 451-478행 | request마다 `UpdateUiConfigReply`를 `send(MediaMsg.UPDATE_UI_CONFIG_REPLY, ...)`로 폰→HU 방향 전송한다. config가 없으면 현재 config로 즉시 회신하고, config가 있으면 레이아웃 적용 후 프레임이 따라간 뒤 또는 대기 시간 초과 후 회신한다 |
+| VERIFIED | [AARE v1.6.0 `UiConfigUpdate.kt`](https://raw.githubusercontent.com/prototux/AARE/v1.6.0/aap/src/main/kotlin/net/prototux/aare/aap/channels/UiConfigUpdate.kt) 전체 | 프로토콜 4.3 미만은 변경분 merge, 4.3 이상은 전체 replace. theme은 갱신 대상이 아니며 config 없는 request는 무변경 |
+| VERIFIED | [AARE v1.6.0 gearhead notes](https://raw.githubusercontent.com/prototux/AARE/v1.6.0/docs/research/gearhead-notes.md) 360-361, 624행 | video 채널에서 `0x8009`는 HU→phone `xuw {1: UiConfig}`, `0x800A`는 phone→HU reply. 런타임 지오메트리 변경은 이 request/reply 쌍으로 처리된다 |
+| VERIFIED | `src/ce/ce_aa_projection.c:26-32,394-433,480-485` | GD13MY의 video 채널 허용 목록에 `0x8009`가 없다. `media()`의 `default: return 0`을 거쳐 호출부가 `report_rejected_message()` 후 projection 루프를 종료한다. `src/`, `tools/`, `tests/` 어디에도 `0x8009` 송신 또는 `0x800A` 수신 처리가 없다 |
+| VERIFIED | `src/ce/ce_aa_tls.c:972-975` | service discovery는 800×480@30, density 160만 광고하고 `ui_config`, margin, cutouts를 보내지 않는다 |
+
+**방향 정정:** GD13MY가 video 채널의 `0x8009`를 받아 종료하는 것은 로컬 구현의 사실이다. 그러나 AARE phone의 정상 계약은 `0x8009`를 **수신만**하고 `0x800A`로 **응답**하는 것이다. 따라서 기대되는 HU 측 구현은 `0x8009` 송신과 `0x800A` 수신 처리이며, GD13MY에는 두 경로가 모두 없다. 이 문서는 수신 거부를 "단순 무시"나 "강제 성공"으로 바꾸지 않고, 방향 계약과 로컬 정책의 차이만 기록한다. 실제 세션에서 해당 메시지가 오가는지와 티맵 증상과의 인과는 여전히 **UNKNOWN**이다.
+
+### 회귀 확인
+
+2026-11-28, Python 3.15.0b3, Windows x64, `python.exe` 기준. `pytest`는 이 환경에 설치되어 있지 않아 프로젝트 문서가 사용하는 표준 라이브러리 `unittest`를 실행했다. 코드 변경은 없었다.
+
+| 범위 | 명령 | 결과 |
+|---|---|---|
+| 관련 모듈 | `python -m unittest tests.test_gd13my_projection tests.test_pc_video tests.test_phase2 tests.test_aare_rgb565 -v` | 39개 통과, 2.113초, 실패 없음 |
+| 전체 | `python -m unittest discover -s tests -q` | 98개 실행, 1개 환경 조건 건너뜀, 실패 없음, 23.229초 |
+
+이 시험은 기존 동작의 회귀만 확인한다. `src/`, `tools/`, `tests/`에 `0x8009`/`0x800A` fixture나 assertion이 없으므로 UI config 계약이 구현됐음을 증명하지는 않는다. 라이브 AOA/TLS 캡처는 CE 에뮬레이터가 실행 중이지 않아 BLOCKED이며, 사용자가 직접 열거나 명시적으로 재실행을 허용한 뒤 같은 세션에서 discovery, `0x8009`/`0x800A`, safe area, 터치 좌표를 함께 캡처해야 한다.

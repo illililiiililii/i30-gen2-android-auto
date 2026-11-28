@@ -11,7 +11,7 @@ v8 게스트 자동 실행은 `b912009`에서 추가됐다. 실폰 USB 시험의
 | AARE 1.6.0 APK 실폰 설치 | VERIFIED. 최초 ADB `unauthorized`, 사용자 승인 후 `adb install -r` Success. `net.prototux.aare` 1.6.0 / versionCode 10600, 실행 액티비티 확인. 앱 실행·USB/TLS는 미검증 | [설치 기록](android-auto/aare/AARE_APK_INSTALL_ATTEMPT.md) |
 | USB 자동 실행·부팅 연결 대기 | ARM/API 및 v8 가상폰 첫 프레임 | [진행 기록](android-auto/aare/PROGRESS.md) |
 | v8 실폰 자동 연결·재연결 | 두 옵션 ON에서 AOA 2, AAP 1.7, 상호 TLS, 첫 프레임, 터치, 순정 지도 복귀 및 재연결 확인. 새 USB DLL은 버전 OUT 실패 주입 뒤 실제 폰 재연결 및 첫 프레임까지 확인했다. 기존 AOA를 유지한 재시동의 첫 OUT 타임아웃은 남아 있다 | [실폰 재연결 시험](testing/AARE_PHYSICAL_USB_RECOVERY.md) |
-| 회귀시험 | Python 97개 통과, 환경 조건 1개 건너뜀. ARM USB/TLS/투사 fixture 통과 | [실폰 재연결 시험](testing/AARE_PHYSICAL_USB_RECOVERY.md) |
+| 회귀시험 | Python 98개 실행·환경 조건 1개 건너뜀, 관련 4모듈 39개 통과. ARM USB/TLS/투사 fixture 통과 | [실폰 재연결 시험](testing/AARE_PHYSICAL_USB_RECOVERY.md), [UI config 방향 재확인](android-auto/aare/TMAP_DISPLAY_UPSTREAM_CROSSCHECK.md) |
 | GPU | WGL 선택 경로; readback 때문에 GDI 기본 유지 | [실지도 벤치](hardware/hardware-acceleration/REAL_MAP_BENCHMARK.md) |
 | GPTimer | 전체 guest 처리량 +7.7%, 지도 구간 +0.9%; 체감 개선 미입증 | [실지도 벤치](hardware/hardware-acceleration/REAL_MAP_BENCHMARK.md) |
 | 순정 지도 리소스 | 지도와 투사 창은 기존 구조에서 같은 프로세스에 의존한다. 가상폰 투사 구간 지도 swap/복사 0~6회, GPS 재설정 로그 지속, 분리 후 순정 메뉴 응답 확인 | [A 기준 측정](testing/AARE_STOCK_RESOURCE_BASELINE.md) |
@@ -21,10 +21,12 @@ v8 게스트 자동 실행은 `b912009`에서 추가됐다. 실폰 USB 시험의
 | 영상 파이프라인 | 8단계 인벤토리 정리(USB-TLS-AAP-H264-색변환-복사-출력), BGRA 변환 병목 식별 | [파이프라인](android-auto/aare/VIDEO_PIPELINE_INVENTORY.md) |
 | H.264 디코더 최적화 | ARM fixture에서 fast-copy 후보 반복 개선 확인, 실기 미검증으로 opt-in 유지; codegen/NEON 기본값 변경 없음 | [최적화 결과](android-auto/aare/H264_OPTIMIZATION_RESULTS.md) |
 | 자동 실행 옵션별 실폰 동작 | 두 옵션 ON 검증. USB만 ON, 부팅만 ON, 모두 OFF, 후방카메라 선점 및 비정상 종료 복구 미검증. 약 2초 자동 동의는 v8에 없음 | [실폰 재연결 시험](testing/AARE_PHYSICAL_USB_RECOVERY.md) |
-| 티맵 분할 | VideoConfiguration/Insets(미제공) 대조 완료. GD13MY는 margin/insets/ui_config 미전송, `0x8009`를 거부하고 세션 종료. Upstream과 재대조했으나 증상 원인은 UNKNOWN | [티맵 증거](android-auto/aare/TMAP_DISPLAY_EVIDENCE.md), [재대조](android-auto/aare/TMAP_DISPLAY_UPSTREAM_CROSSCHECK.md) |
+| 티맵 분할 | VideoConfiguration/Insets(미제공) 대조 완료. AARE 1.6.0 기준 `0x8009`는 HU→phone, `0x800A`는 phone→HU로 확인. GD13MY는 margin/insets/ui_config 미전송, 두 경로 모두 미구현, 수신한 `0x8009`는 거부 후 세션 종료. 증상 원인은 UNKNOWN | [티맵 증거](android-auto/aare/TMAP_DISPLAY_EVIDENCE.md), [방향 재확인](android-auto/aare/TMAP_DISPLAY_UPSTREAM_CROSSCHECK.md) |
 | 실차 ±5% | 실측 기준 없음 | [가속 인계](hardware/hardware-acceleration/FINAL_HANDOFF.md) |
 | 실차 설치 | 승인되지 않음; 복구 경로와 실제 MUSB 동작 미검증 | [실기 점검](android-auto/aare/HARDWARE_READINESS.md), [위험 평가](safety/PHASE6_BRICK_RISK_ASSESSMENT.md) |
 
 이전 순정 Google Android Auto 신뢰 실패와 AARE 등록 인증서 성공은 다른 경로다. 실폰+에뮬레이터 성공은 실차 성공이 아니다. 기존 HARDWARE_READINESS의 자동 연결 설명은 v8 이전 상태이며 최신 자동 실행 상태는 PROGRESS와 FINAL_HANDOFF를 따른다.
+
+현재 CE 에뮬레이터 프로세스는 확인되지 않는다. 사용자가 직접 닫은 프로그램을 재실행하지 않는다. 따라서 라이브 AOA/TLS 전환, `0x8009`/`0x800A` 트래픽, 첫 프레임·터치·재연결 캡처는 사용자가 에뮬레이터를 직접 열거나 명시적으로 재실행을 허용할 때까지 BLOCKED다. 정적 계약 대조와 기존 회귀시험만 완료됐다.
 
 사용자 보고: 티맵 분할 화면 차량 아이콘 위치 및 속도계 이상, 체감 성능 부족. 원인 및 수정 여부는 미검증. [다음 작업](NEXT_TASKS.md).
