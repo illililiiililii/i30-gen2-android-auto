@@ -17,8 +17,11 @@ SCHEMAS = [
     *(CONTROL + "message/" + name + ".proto" for name in (
         "AuthResponse", "ServiceDiscoveryRequest", "ServiceDiscoveryResponse", "ChannelOpenRequest",
         "ChannelOpenResponse", "PingRequest", "PingResponse", "ByeByeRequest", "ByeByeResponse",
-        "AudioFocusRequest", "AudioFocusNotification", "VoiceSessionNotification")),
+        "AudioFocusRequest", "AudioFocusNotification", "VoiceSessionNotification",
+        "UpdateUiConfigRequest", "UpdateUiConfigReply")),
     MEDIA + "sink/MediaMessageId.proto",
+    MEDIA + "shared/message/Insets.proto",
+    MEDIA + "shared/message/UiConfig.proto",
     *(MEDIA + "shared/message/" + name + ".proto" for name in ("Setup", "Config", "Start", "Stop")),
     MEDIA + "source/message/Ack.proto",
     MEDIA + "source/message/MicrophoneRequest.proto",

@@ -3,6 +3,13 @@
 
 #include "ce_aa_video.h"
 #include "ce_aa_native_win.h"
+#ifdef I30_UI_CONFIG_EXPERIMENT
+#include "ce_aa_uiconfig.h"
+#endif
+#ifdef I30_VIDEO_UYVY_STAGING
+#include <string.h>
+#include "ce_aa_uyvy_stage.h"
+#endif
 
 CE_HANDLE GetForegroundWindow(void);
 CE_HANDLE GetDC(CE_HANDLE);
@@ -13,6 +20,7 @@ void *LocalAlloc(uint32_t, uint32_t);
 void *LocalFree(void *);
 int32_t SendMessageTimeout(CE_HANDLE, unsigned, uint32_t, int32_t, unsigned, unsigned, uint32_t *);
 
+#ifndef I30_VIRTUAL_LCD_BENCH
 static CE_HANDLE render_pending = (CE_HANDLE)-1;
 
 static int automatic_render_pending(void)
@@ -22,10 +30,14 @@ static int automatic_render_pending(void)
     return render_pending && render_pending != (CE_HANDLE)-1 &&
            WaitForSingleObject(render_pending, 0) == 0U;
 }
+#endif
 
 enum { VIDEO_CHANNEL = I30_PROJECTION_VIDEO_CHANNEL, CONTROL = 4, H264_BASELINE = 3 };
 enum { OPEN = 7, CLOSE = 9, PING = 11, GOODBYE = 15, AUDIO_FOCUS_REQUEST = 18 };
 enum { DATA = 0, CODEC = 1, SETUP = 0x8000, START = 0x8001, STOP = 0x8002, FOCUS = 0x8007 };
+#ifdef I30_UI_CONFIG_EXPERIMENT
+enum { UPDATE_UI_CONFIG_REQUEST = 0x8009, UPDATE_UI_CONFIG_REPLY = 0x800A };
+#endif
 enum { PROJECTED = 1, NATIVE = 2, PROJECTED_NO_INPUT = 4 };
 enum VideoState { ADVERTISED, OPENED, CONFIGURED, STREAMING };
 enum { INPUT_CHANNEL = I30_PROJECTION_INPUT_CHANNEL, INPUT_REPORT = 0x8001, KEY_BINDING = 0x8002,
@@ -43,6 +55,13 @@ typedef struct Projection {
     unsigned x, y, touch_timeouts;
     uint32_t next_poll, last_tick;
     uint64_t touch_time;
+#ifdef I30_UI_CONFIG_EXPERIMENT
+    int ui_config_requested, ui_config_reply_present;
+    I30UiConfig ui_config_reply;
+#endif
+#ifdef I30_VIDEO_UYVY_STAGING
+    I30UyvyStage uyvy_stage;
+#endif
 } Projection;
 
 static void report_rejected_message(unsigned channel, unsigned flags, unsigned code)
@@ -344,6 +363,32 @@ static int input_message(Projection *video, unsigned flags, unsigned code, const
     return wire->send(wire->context, INPUT_CHANNEL, 0, reply, (unsigned)(end - reply));
 }
 
+#ifdef I30_UI_CONFIG_EXPERIMENT
+static int send_ui_config_request(const I30SecureChannel *wire, Projection *video)
+{
+    uint8_t message[128];
+    I30UiConfig config;
+    i30_uiconfig_experiment_default(&config);
+    unsigned size = i30_uiconfig_encode(message, sizeof(message), UPDATE_UI_CONFIG_REQUEST, &config);
+    if (!size || !wire->send(wire->context, VIDEO_CHANNEL, 0, message, size))
+        return 0;
+    video->ui_config_requested = 1;
+    OutputDebugStringW(L"i30 CE UI config update request sent.\r\n");
+    return 1;
+}
+
+static int receive_ui_config_reply(Projection *video, const uint8_t *message, unsigned length)
+{
+    if (length < 2 || message[0] != (unsigned)(UPDATE_UI_CONFIG_REPLY >> 8) ||
+        message[1] != (unsigned)(UPDATE_UI_CONFIG_REPLY & 255U) ||
+        !i30_uiconfig_decode(message + 2, length - 2, &video->ui_config_reply))
+        return 0;
+    video->ui_config_reply_present = 1;
+    OutputDebugStringW(L"i30 CE UI config update reply received.\r\n");
+    return 1;
+}
+#endif
+
 static int control(const I30SecureChannel *wire, Projection *video, unsigned code,
                    uint8_t *message, unsigned length)
 {
@@ -371,7 +416,11 @@ static int paint_packet(const I30SecureChannel *wire, Projection *video, unsigne
     uint32_t session = video->session;
     if (video->state != STREAMING || length <= prefix)
         return 0;
+#ifdef I30_VIDEO_UYVY_STAGING
+    const I30VideoTarget target = {&video->uyvy_stage, begin_paint, end_paint, i30_uyvy_stage};
+#else
     const I30VideoTarget target = {video->window, begin_paint, end_paint};
+#endif
     int can_paint = video->granted_focus != NATIVE && i30_projection_surface() == video->window;
     int rendered = i30_video_push(video->decoder, can_paint ? &target : 0, message + prefix, length - prefix);
     if (rendered < 0)
@@ -397,6 +446,14 @@ static int media(const I30SecureChannel *wire, Projection *video, unsigned code,
     uint32_t one = 0, two = 0;
     if (code == DATA || code == CODEC)
         return paint_packet(wire, video, code, message, length);
+#ifdef I30_UI_CONFIG_EXPERIMENT
+    /* 0x8009 is head unit -> phone. Receiving one on the video channel is a
+     * direction error even in the experiment; 0x800A is the phone's reply. */
+    if (code == UPDATE_UI_CONFIG_REQUEST)
+        return 0;
+    if (code == UPDATE_UI_CONFIG_REPLY)
+        return receive_ui_config_reply(video, message, length);
+#endif
     int present = fields(message + 2, length - 2, &one, &two);
     if (present < 0 || video->state == ADVERTISED)
         return 0;
@@ -413,11 +470,16 @@ static int media(const I30SecureChannel *wire, Projection *video, unsigned code,
         if (present != 3 || (one & 0x80000000U) || two || video->state != CONFIGURED)
             return 0;
         video->decoder = i30_video_open();
+        if (!video->decoder)
+            return 0;
         video->session = one;
         video->state = STREAMING;
-        if (video->decoder)
-            OutputDebugStringW(L"i30 CE H.264 video stream started.\r\n");
-        return video->decoder != 0;
+        OutputDebugStringW(L"i30 CE H.264 video stream started.\r\n");
+#ifdef I30_UI_CONFIG_EXPERIMENT
+        if (!video->ui_config_requested && !send_ui_config_request(wire, video))
+            return 0;
+#endif
+        return 1;
     case STOP:
         reset_video(video);
         video->state = OPENED;
@@ -442,6 +504,13 @@ int i30_projection_video(const I30SecureChannel *wire, CE_HANDLE window, int inp
     int graceful = 0;
     if (!video_buffer)
         return 0;
+#ifdef I30_VIDEO_UYVY_STAGING
+    video.uyvy_stage.surface = HeapAlloc(GetProcessHeap(), 0, I30_UYVY_STAGE_BYTES);
+    if (video.uyvy_stage.surface)
+        memset(video.uyvy_stage.surface, 0xa5, I30_UYVY_STAGE_BYTES);
+    else
+        OutputDebugStringW(L"i30 CE UYVY diagnostic allocation failed; GDI fallback retained.\r\n");
+#endif
     while (update_focus(wire, &video, 1) && poll_touch(&video)) {
         unsigned channel, flags, code;
         uint8_t *message;
@@ -489,6 +558,13 @@ int i30_projection_video(const I30SecureChannel *wire, CE_HANDLE window, int inp
         touch_window(&video, I30_TOUCH_DISABLE, &result);
     }
     reset_video(&video);
+#ifdef I30_VIDEO_UYVY_STAGING
+    if (video.uyvy_stage.surface) {
+        if (video.uyvy_stage.frames)
+            OutputDebugStringW(L"i30 CE UYVY diagnostic packed frames; GDI fallback retained.\r\n");
+        HeapFree(GetProcessHeap(), 0, video.uyvy_stage.surface);
+    }
+#endif
     LocalFree(video_buffer);
     return graceful;
 }

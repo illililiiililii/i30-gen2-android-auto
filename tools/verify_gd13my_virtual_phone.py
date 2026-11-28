@@ -44,6 +44,40 @@ LCD_SIZE = (800, 480)
 LCD_RGB_ERROR_LIMIT = 8
 GUEST_TICKS_PER_SECOND = 32768
 VIDEO_CHANNEL = 3
+UPDATE_UI_CONFIG_REQUEST = 0x8009
+UPDATE_UI_CONFIG_REPLY = 0x800A
+SHARED = 'aap_protobuf.service.media.shared.message.'
+
+
+def parse_ui_update(data):
+    """Read the single UiConfig field shared by 0x8009 and 0x800A bodies."""
+    if not data or data[0] != 0x0a:
+        raise ProtocolError('UiConfig update is missing field 1')
+    offset, length, shift = 1, 0, 0
+    while True:
+        if offset >= len(data) or shift > 21:
+            raise ProtocolError('UiConfig update has an invalid length')
+        byte = data[offset]
+        offset += 1
+        length |= (byte & 127) << shift
+        if not byte & 128:
+            break
+        shift += 7
+    if offset + length != len(data):
+        raise ProtocolError('UiConfig update length does not match the message')
+    return schema.parse(SHARED + 'UiConfig', data[offset:offset + length])
+
+
+def wrap_ui_update(config):
+    body = config.SerializeToString()
+    return b'\x0a' + bytes((len(body),)) + body
+
+
+def ui_config_summary(config):
+    def read(field):
+        return {name: getattr(field, name) for name in ('top', 'bottom', 'left', 'right')}
+    return {name: read(getattr(config, name)) for name in
+            ('margins', 'content_insets', 'stable_content_insets') if config.HasField(name)}
 
 
 def build_probe(compiler, scratch, lcd_bench, owned_window, calibrate, audio_query=False):
@@ -103,7 +137,8 @@ class VirtualPhone:
     device_descriptor = bytes.fromhex('1201000200000040d118002d000100000001')
     config_descriptor = bytes.fromhex('09022000010100c0320904000002ff0000000705810200020007050102000200')
 
-    def __init__(self, context, frame, *, close_after_frame=True, interleave_control=False):
+    def __init__(self, context, frame, *, close_after_frame=True, interleave_control=False,
+                 ui_config_experiment=False, ui_config_discovery=False):
         self.controller = HostMusb(self)
         self.context = context
         self.tls = TlsRecords(context, server=True)
@@ -120,6 +155,11 @@ class VirtualPhone:
         self.focus = 0
         self.focus_history = []
         self.transfers = []
+        self.ui_config_experiment = ui_config_experiment
+        self.ui_config_discovery = ui_config_discovery
+        self.ui_config_requests = []
+        self.ui_config_replies = []
+        self.discovery_ui_configs = []
         self.reset()
 
     def reset(self):
@@ -184,6 +224,12 @@ class VirtualPhone:
         elif channel == 0 and code == 6:
             services = schema.parse(schema.CTL + 'ServiceDiscoveryResponse', data)
             self.discovery = VIDEO_CHANNEL in [item.id for item in services.channels]
+            for service in services.channels:
+                if service.id != VIDEO_CHANNEL or not service.HasField('media_sink_service'):
+                    continue
+                for video in service.media_sink_service.video_configs:
+                    if video.HasField('ui_config'):
+                        self.discovery_ui_configs.append(ui_config_summary(video.ui_config))
             touch = next((item.input_source_service for item in services.channels if item.id == INPUT_CHANNEL), None)
             if touch is not None:
                 assert [(item.width, item.height) for item in touch.touchscreen] == [LCD_SIZE]
@@ -225,6 +271,14 @@ class VirtualPhone:
             self.video_focus()
         elif channel == 3 and code == 0x8004 and data == b'\x08\x23\x10\x01':
             self.video_ack()
+        elif channel == VIDEO_CHANNEL and code == UPDATE_UI_CONFIG_REQUEST:
+            if not self.ui_config_experiment:
+                raise ProtocolError('Unexpected head unit UI config request')
+            config = parse_ui_update(data)
+            self.ui_config_requests.append(ui_config_summary(config))
+            reply = wrap_ui_update(config)
+            self.ui_config_replies.append(ui_config_summary(config))
+            self.send(UPDATE_UI_CONFIG_REPLY, reply, channel=VIDEO_CHANNEL)
         elif channel == 0 and code == 12 and data == b'\x08\x7b' and self.interleave_control:
             self.pongs += 1
         elif channel == 0 and code == 12 and not self.close_after_frame:
@@ -725,7 +779,12 @@ def verify(args):
             files.writebytes(navi + 'i30-peer.txt', b'i30-mock.local\n')
         phone = (StreamingPhone(ctx, args.stream_frames, args.fps) if args.stream_frames else
                  VirtualPhone(ctx, test_picture(frame=image), close_after_frame=not native_navigation,
-                              interleave_control=args.interleave_control))
+                              interleave_control=args.interleave_control,
+                              ui_config_experiment=args.ui_config_experiment,
+                              ui_config_discovery=args.ui_config_discovery))
+        if args.stream_frames:
+            phone.ui_config_experiment = args.ui_config_experiment
+            phone.ui_config_discovery = args.ui_config_discovery
         with args.disk.open('rb') as disk, patch.open('rb') as app:
             media = AppPartitionOverlay(disk, app)
             media.enable_host_utc(manifest['emulator_utc_offset'])
@@ -762,6 +821,11 @@ def verify(args):
                       'boot_clock_mhz': args.boot_clock_mhz,
                       'usb_clock_mhz': kernel.VIRTUAL_CPU_UNITS_PER_SECOND / 1_000_000,
                       'transfers': phone.transfers, 'wall_seconds': round(monotonic() - started, 3)}
+            if args.ui_config_experiment:
+                status.update(ui_config_requests=phone.ui_config_requests,
+                              ui_config_replies=phone.ui_config_replies)
+            if args.ui_config_discovery:
+                status['discovery_ui_configs'] = phone.discovery_ui_configs
             if image is not None:
                 status['source_image'] = str(args.frame_image)
                 status['lcd_rgb_mean_absolute_error'] = run.lcd_mean_error
@@ -805,6 +869,10 @@ def verify(args):
     if args.audio_query and any(set(status[key]) != {'OUT', 'IN'} for key in
                                 ('wave_format_query', 'wave_device_count', 'wave_caps_return')):
         return False
+    if args.ui_config_experiment and not (status['ui_config_requests'] and status['ui_config_replies']):
+        return False
+    if args.ui_config_discovery and not status['discovery_ui_configs']:
+        return False
     if args.stream_frames:
         return (len(status['cycles']) == args.cycles and
                 all(c.get('display_released') and c['after_rgb'] and c['touch_cases_passed'] for c in status['cycles']) and
@@ -840,6 +908,10 @@ def main():
     parser.add_argument('--interleave-control', action='store_true',
                         help='Send a control ping between fragments of a video frame during an isolated LCD test')
     parser.add_argument('--audio-query', action='store_true', help='Probe PCM formats in the isolated WinCE LCD bench')
+    parser.add_argument('--ui-config-experiment', action='store_true',
+                        help='Expect an HU 0x8009 UiConfig request and answer with 0x800A')
+    parser.add_argument('--ui-config-discovery', action='store_true',
+                        help='Require VideoConfiguration.ui_config in service discovery')
     parser.add_argument('--seconds', type=int, default=230)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--lcd-bench', action='store_true', help='Use the display in the isolated LCD test')

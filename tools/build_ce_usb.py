@@ -187,7 +187,8 @@ def build_bearssl(compiler, source, work, options, run_tool):
 
 
 def build(compiler, output, bearssl_source=None, h264_source=None, virtual_lcd_bench=False,
-          video_format='bgra', codegen='armv4t-os', h264_profile=False, h264_fast_copy=False):
+          video_format='bgra', codegen='armv4t-os', h264_profile=False, h264_fast_copy=False,
+          ui_config_experiment=False, ui_config_discovery=False):
     source = ROOT / 'src/ce'
     exports = rom_exports()
     target_flags, decoder_flags = CODEGEN_FLAGS[codegen]
@@ -249,8 +250,16 @@ def build(compiler, output, bearssl_source=None, h264_source=None, virtual_lcd_b
                         units.append(source / 'ce_aa_profile.c')
                     if video_format == 'rgb565':
                         units.append('-DI30_VIDEO_RGB565')
+                    elif video_format == 'uyvy-staging':
+                        units.extend(('-DI30_VIDEO_UYVY_STAGING', source / 'ce_aa_uyvy_stage.c'))
                     if virtual_lcd_bench:
                         units.append('-DI30_VIRTUAL_LCD_BENCH')
+                    if ui_config_experiment or ui_config_discovery:
+                        units.append(source / 'ce_aa_uiconfig.c')
+                    if ui_config_experiment:
+                        units.append('-DI30_UI_CONFIG_EXPERIMENT')
+                    if ui_config_discovery:
+                        units.append('-DI30_UI_CONFIG_DISCOVERY')
                 units.extend((tls_library, *link_libs))
             linker = f'-Wl,--emit-relocs,-T,{source / "ce_minimal.ld"}'
             keep_usb_entry = ('-Wl,--gc-sections,-u,USBDeviceAttach',) if video else ()
@@ -273,7 +282,10 @@ def build(compiler, output, bearssl_source=None, h264_source=None, virtual_lcd_b
             report[target]['codegen'] = codegen
             if video:
                 report[target]['video_format'] = video_format
+                report[target]['uyvy_staging'] = video_format == 'uyvy-staging'
                 report[target]['h264_fast_copy'] = h264_fast_copy
+                report[target]['ui_config_experiment'] = bool(ui_config_experiment)
+                report[target]['ui_config_discovery'] = bool(ui_config_discovery)
                 sample_symbols = {'h264bsdDecode', 'h264bsdNextOutputPictureBGRA',
                                   'h264bsdConvertToBGRA', 'i30_yuv420_to_rgb565', 'i30_video_push',
                                   '__cyg_profile_func_enter', '__cyg_profile_func_exit'}
@@ -323,14 +335,19 @@ def main():
     parser.add_argument('--bearssl-source', type=Path, help='Include the native TLS stage from an extracted BearSSL release')
     parser.add_argument('--h264-source', type=Path, help='Include the guest video channel and decoder for an authorized surface')
     parser.add_argument('--virtual-lcd-bench', action='store_true', help='Use the LCD in an isolated virtual-phone test image')
-    parser.add_argument('--video-format', choices=('bgra', 'rgb565'), default='bgra',
-                        help='Select the WinCE DIB color path; BGRA remains the validated fallback')
+    parser.add_argument('--video-format', choices=('bgra', 'rgb565', 'uyvy-staging'), default='bgra',
+                        help='Select the WinCE DIB color path; BGRA remains the validated fallback. '
+                             'uyvy-staging packs I420 into a padded buffer for diagnostics only')
     parser.add_argument('--codegen', choices=tuple(CODEGEN_FLAGS), default='armv4t-os',
                         help='Compiler/architecture preset; non-baseline presets are experimental')
     parser.add_argument('--h264-profile', action='store_true',
                         help='Instrument h264bsd with -finstrument-functions for ARM fixture profiling')
     parser.add_argument('--h264-fast-copy', action='store_true',
                         help='Opt-in inline aligned memcpy specialization for h264bsd reference rows')
+    parser.add_argument('--ui-config-experiment', action='store_true',
+                        help='Opt-in AARE 0x8009 UiConfig request and 0x800A reply experiment')
+    parser.add_argument('--ui-config-discovery', action='store_true',
+                        help='Opt-in VideoConfiguration.ui_config in service discovery')
     parser.add_argument('output', type=Path)
     args = parser.parse_args()
     if args.h264_source and (not args.bearssl_source or not (args.h264_source / 'src/h264bsd_decoder.h').is_file() or
@@ -341,7 +358,8 @@ def main():
     report = build(args.compiler.resolve(strict=True), args.output,
                    args.bearssl_source.resolve(strict=True) if args.bearssl_source else None,
                    args.h264_source.resolve(strict=True) if args.h264_source else None, args.virtual_lcd_bench,
-                   args.video_format, args.codegen, args.h264_profile, args.h264_fast_copy)
+                   args.video_format, args.codegen, args.h264_profile, args.h264_fast_copy,
+                   args.ui_config_experiment, args.ui_config_discovery)
     print(json.dumps(report, indent=2))
 
 

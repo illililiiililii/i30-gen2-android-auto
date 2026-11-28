@@ -5,6 +5,9 @@
 #ifdef I30_NATIVE_VIDEO
 #include "ce_aa_projection.h"
 #endif
+#ifdef I30_UI_CONFIG_DISCOVERY
+#include "ce_aa_uiconfig.h"
+#endif
 
 #include <string.h>
 
@@ -948,6 +951,38 @@ static void present_media(void *context)
 }
 #endif
 
+#ifdef I30_UI_CONFIG_DISCOVERY
+/* Add VideoConfiguration.ui_config (field 11) to the verified service bytes.
+ * The current length prefixes are one-byte varints; refuse to patch them if
+ * an experiment config can no longer be represented in that form. */
+static unsigned append_discovery_uiconfig(uint8_t *service, unsigned length, unsigned capacity)
+{
+    enum { VIDEO_CONFIG_OFFSET = 10, VIDEO_CONFIG_SIZE = 7, INSERT_OFFSET = 17 };
+    I30UiConfig config;
+    uint8_t ui[96];
+    unsigned ui_size, delta;
+    if (length < INSERT_OFFSET || service[0] != 0x0a || service[4] != 0x1a || service[8] != 0x22 ||
+        service[9] != VIDEO_CONFIG_SIZE)
+        return 0;
+    i30_uiconfig_experiment_default(&config);
+    ui_size = i30_uiconfig_encode_ui(ui, sizeof(ui), &config);
+    if (!ui_size || ui_size >= 128U)
+        return 0;
+    delta = 2U + ui_size;
+    if (length + delta > capacity || (unsigned)service[1] + delta >= 128U ||
+        (unsigned)service[5] + delta >= 128U || (unsigned)service[9] + delta >= 128U)
+        return 0;
+    memmove(service + INSERT_OFFSET + delta, service + INSERT_OFFSET, length - INSERT_OFFSET);
+    service[INSERT_OFFSET] = 0x5a; /* VideoConfiguration.ui_config */
+    service[INSERT_OFFSET + 1U] = (uint8_t)ui_size;
+    memcpy(service + INSERT_OFFSET + 2U, ui, ui_size);
+    service[1] = (uint8_t)(service[1] + delta);
+    service[5] = (uint8_t)(service[5] + delta);
+    service[9] = (uint8_t)(service[9] + delta);
+    return length + delta;
+}
+#endif
+
 static int discover(Session *s, const I30Link *link, void (*start_video)(void *),
                     void (*video_presented)(void *))
 {
@@ -979,7 +1014,15 @@ static int discover(Session *s, const I30Link *link, void (*start_video)(void *)
         s->control[1] = 6;
         memcpy(s->control + 2, identity + 2, sizeof(identity) - 2);
         memcpy(s->control + end, video_channel, sizeof(video_channel));
+#ifdef I30_UI_CONFIG_DISCOVERY
+        unsigned video_end = end + append_discovery_uiconfig(s->control + end, sizeof(video_channel),
+                                                              sizeof(s->control) - end);
+        if (video_end == end)
+            return 0;
+        end = video_end;
+#else
         end += sizeof(video_channel);
+#endif
         if (input) {
             memcpy(s->control + end, input_channel, sizeof(input_channel));
             end += sizeof(input_channel);
