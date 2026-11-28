@@ -88,3 +88,11 @@ ADB 진단으로 설치 APK, Android framework 이벤트, 저장된 accessory pr
 - **VERIFIED** — 과거 수동 성공 이미지의 네 AARE 인증 자료 파일은 로컬 identity와 파일 단위 SHA-256이 일치한다. 폰에 등록된 client certificate 자체는 `UNKNOWN`이다.
 
 ADB는 진단에만 사용했고 최종 흐름의 사용자 의존성으로 추가하지 않았다. 상위 수준 판단 전까지 manufacturer 후보를 부팅하지 않고 추가 화면 보고나 재연결을 요청하지 않는다. 자세한 근거와 재현 메모는 [USB 소유권·전달 경로 진단](../android-auto/aare/USB_OWNERSHIP_DIAGNOSIS_20261129.md)에 있다.
+
+## 2026-11-29: 과거 수동 성공 이미지 재실행
+
+과거 수동 성공 이미지 `E:\i30-gd13my-images\opencode-resume-perf\touch\gd13my-aare-settings-o2.img`를 현재 폰·호스트에서 다시 실행했다. firmware 재빌드, 인증서 재생성, Google AA 설정 변경, 권한 우회는 없다. 별도 상태 DB와 기존 수동 시작 흐름을 사용했고 사용자에게 같은 조작을 반복 요청하지 않았다.
+
+첫 시도는 `18d1:2d01` 구성 조회에서 `[Errno 13] Access denied`였다. 진단용 ADB 서버 정지 후 같은 뷰어가 장치를 열어 63 B config descriptor와 `SET_CONFIGURATION 1`을 거쳤지만, 첫 AAP version request가 엔드포인트 `0x01`에서 `[Errno 5] Input/Output Error`로 실패했다. 게스트 로그에는 USB 대기 화면과 `TxCSR_H_Error at EP 1`가 있다. version response, TLS, `AUTH_COMPLETE`, 서비스 탐색, 첫 프레임은 없다.
+
+**VERIFIED** — 과거 성공 이미지도 현재 환경에서는 pre-TLS 실패를 재현한다. **UNKNOWN** — 03:07 세션의 AARE 액티비티 시작, `ProjectionService`, USB FD 확보. 실패 후 ADB가 device를 보지 못해 새 logcat/dumpsys를 받지 못했고, 02:34·02:35의 기존 완충 로그는 별도 세션이므로 확장하지 않는다. **INFERRED** — 남은 차이는 현재 폰/호스트 USB 환경과 재열거 후 descriptor 상태이며, phone 측 endpoint 준비 실패와 증상이 일치한다. 원인 확정은 아니다. 상세 표는 [진단 문서 §8](../android-auto/aare/USB_OWNERSHIP_DIAGNOSIS_20261129.md#8-과거-성공-이미지를-현재-폰호스트에서-재실행)에 있다.

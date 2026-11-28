@@ -43,6 +43,8 @@
 | 과거 성공 이미지의 `i30usb.dll`은 `54da76f6…`, `i30nav.dll` `fcb1e02c…`, `i30aa.exe` `36140002…` | VERIFIED | `E:\i30-gd13my-images\opencode-resume-perf\touch\gd13my-aare-settings-o2.img`에서 추출 |
 | 과거 성공 이미지는 자동 실행 설정이 없음 | VERIFIED | 이미지에 `i30auto.opt`/`i30boot.opt` 없음; 문서상 수동 AARE 세션에서 성공 |
 | v8은 신규 세션과 물리 재연결 성공, 시동 OFF→ON 중 AOA 잔존 실패로 문서화됨 | VERIFIED | `docs/testing/AARE_PHYSICAL_USB_RECOVERY.md`의 실행 기록. 정적 재현 아님 |
+| 과거 수동 성공 이미지를 현재 폰/호스트에서 재실행해도 같은 pre-TLS `[Errno 5]`로 실패 | VERIFIED | `build/success-image-repro-20261129/gd13my-window-20261129-030712-510244.usb-host.log` 14행. firmware/인증서/Google AA 설정 변경 없음 |
+| 재실행 세션의 AARE 액티비티·`ProjectionService`·USB FD 확보 | UNKNOWN | 실패 후 ADB가 device를 보지 못해 새 logcat/dumpsys 없음. 기존 02:34·02:35 로그는 별도 세션 |
 
 상세 재현: [실폰 USB 복구 기록](../../testing/AARE_PHYSICAL_USB_RECOVERY.md#2026-11-28-재실행-aare-세션과-화면의-오류-16), [USB 소유권·전달 경로 진단](USB_OWNERSHIP_DIAGNOSIS_20261129.md)
 
@@ -64,8 +66,10 @@
 
 - **VERIFIED** — 현재 완충 로그의 02:34·02:35 구간에서는 Android가 `USB_ACCESSORY_ATTACHED`를 `net.prototux.aare/.transport.UsbAccessoryActivity`로 해석·시작했다. 같은 구간에서 Google AA는 accessory handshake와 승인까지 갔지만 `USB_ISSUE_FIRST_ACTIVITY_NOT_LAUNCHED`와 projection timeout을 기록했다.
 - **UNKNOWN** — 이 구간이 v2/OAP 과거 실패와 같은 앱 소유권이었는지. 당시 before/after 폰 로그가 없어 과거 세션으로 확장하지 않는다.
-- **VERIFIED** — 후보 v2/OAP 모두 AOA 2 → `18d1:2d01` → control index 3/4 pipe error → bulk OUT AAP version request `[Errno 5]` 순서다. pipe error는 성공 v8 로그에도 있으므로 단독 원인이 아니다.
+- **VERIFIED** — 후보 v2/OAP 모두 AOA 2 → `18d1:2d01` → 표준 Device SET_FEATURE(index 3/4) pipe error → bulk OUT AAP version request `[Errno 5]` 순서다. pipe error는 성공 v8 로그에도 있으므로 단독 원인이 아니다.
+- **VERIFIED** — 별도 02:34·02:35 구간에서 AARE 액티비티와 `ProjectionService`가 시작됐지만 framework가 `/dev/usb_accessory`를 열지 못했고, Google AA는 `NO_FDS_OPEN`을 기록했다. 이 구간을 아래 03:07 재실행 세션으로 확장하지 않는다.
 - **VERIFIED** — 과거 수동 성공 이미지의 `i30-aare-ca.pem`, `i30-aare-client.pem`, `i30-aare-client-key.pem`, `i30-aare-peer-sha256.txt`는 현재 로컬 identity와 파일 단위 SHA-256이 모두 일치한다. 폰에 등록된 client certificate 자체는 여전히 `UNKNOWN`.
+- **VERIFIED** — 같은 과거 수동 성공 이미지를 현재 폰/호스트에서 재실행하면 63 B descriptor → `SET_CONFIGURATION` → bulk OUT `[Errno 5]`로 실패한다. 03:07 세션의 Android 앱/FD 이벤트는 `UNKNOWN`이고, 실패 후 ADB는 `- waiting for device -`로 로그 덤프가 막혔다. manufacturer 후보 이미지를 부팅한 것은 아니다.
 - 진단 로그의 UTF-16 처리, APK 해시, 정확한 filter 값, CE→host 오류 경로와 source line은 위 문서에 있다. 원본 75 MB logcat과 APK는 커밋하지 않았다.
 
 ## 이번 변경
