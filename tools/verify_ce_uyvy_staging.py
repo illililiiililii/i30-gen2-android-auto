@@ -12,7 +12,10 @@ import av
 from unicorn import UC_HOOK_CODE
 from unicorn.arm_const import UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_SP
 
-from emulate_ce_usb import MARK, Machine
+try:
+    from emulate_ce_usb import MARK, Machine
+except ModuleNotFoundError:  # Imported as tools.verify_ce_uyvy_staging.
+    from tools.emulate_ce_usb import MARK, Machine
 
 
 PITCH = 800 * 2 + 32

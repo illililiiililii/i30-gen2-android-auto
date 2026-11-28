@@ -17,7 +17,8 @@ from time import monotonic, process_time, time
 
 import pefile
 from unicorn import UC_ARCH_ARM, UC_HOOK_CODE, UC_MODE_ARM, Uc
-from unicorn.arm_const import (UC_ARM_REG_R0, UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_SP,
+from unicorn.arm_const import (UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3,
+                               UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_SP,
                                UC_CPU_ARM_CORTEX_A8)
 
 
@@ -113,6 +114,231 @@ class Machine:
 
     def CloseHandle(self, *unused):
         return 1
+
+    def ascii(self, p):
+        chars = []
+        for _ in range(500):
+            byte = bytes(self.cpu.mem_read(p, 1))
+            if byte == b'\0':
+                return b''.join(chars).decode('ascii')
+            chars.append(byte)
+            p += 1
+        raise ValueError('Unterminated CE ASCII string')
+
+
+class DdrawDoubleMixin:
+    """ARM-side CE6 DirectDraw API doubles.
+
+    This is a mock contract only: it proves the guest's loader calls, CE6 vtable
+    slots, descriptor offsets and failure handling. It says nothing about real
+    DDRAW.dll surface capabilities, overlay ownership or LCD output.
+    """
+
+    DD_MODULE = 0xd0000000
+    DD_OBJECT = RAM + 0x4000
+    DD_PRIMARY = RAM + 0x4100
+    DD_OVERLAY = RAM + 0x4200
+    DD_BACK = RAM + 0x4300
+    DD_VTABLE = RAM + 0x4400
+    SURFACE_VTABLE = RAM + 0x4500
+    SURFACE_BASE = 0x40000000
+    SURFACE_BYTES = (800 * 2 + 32) * 480
+    UYVY_FOURCC = 0x59565955
+    SURFACE_LOST = 0x887601c2
+
+    def install_ddraw_double(self, *, flip=False, mode=None, capture=True):
+        self.ddraw = {
+            'mode': mode, 'flip': bool(flip), 'loads': [], 'frees': 0, 'procs': [], 'creates': [],
+            'cooperative': [], 'caps_sizes': [],
+            'overlay_caps': 0x80000004 | (1 if flip else 0),
+            'refs': {}, 'locks': 0, 'unlocks': 0, 'restores': 0, 'is_lost': 0,
+            'enums': 0, 'shows': 0, 'hides': 0, 'show_flags': [], 'src_rects': [],
+            'flips': 0, 'flip_status': 0, 'lock_flags': [], 'frame': None,
+            'capture': bool(capture),
+        }
+        self.cpu.mem_map(self.SURFACE_BASE, 0x100000)
+        self.cpu.mem_write(self.SURFACE_BASE, bytes([0xa5]) * self.SURFACE_BYTES)
+        unused = self.hook('DdrawUnused')
+        dd_slots = {
+            0x08: self.hook('DdrawRelease'), 0x14: self.hook('DdrawCreateSurface'),
+            0x24: self.hook('DdrawGetCaps'), 0x2c: self.hook('DdrawGetFourCCCodes'),
+            0x44: self.hook('DdrawSetCooperativeLevel'),
+        }
+        surface_slots = {
+            0x04: self.hook('DdrawAddRef'), 0x08: self.hook('DdrawRelease'),
+            0x14: self.hook('DdrawEnumAttached'), 0x1c: self.hook('DdrawFlip'),
+            0x34: self.hook('DdrawFlipStatus'), 0x48: self.hook('DdrawIsLost'),
+            0x4c: self.hook('DdrawLock'), 0x54: self.hook('DdrawRestore'),
+            0x68: self.hook('DdrawUnlock'), 0x6c: self.hook('DdrawUpdateOverlay'),
+        }
+        for base, slots in ((self.DD_VTABLE, dd_slots), (self.SURFACE_VTABLE, surface_slots)):
+            for index in range(32):
+                self.put(base + index * 4, unused)
+            for offset, address in slots.items():
+                self.put(base + offset, address)
+        for obj, vtable in ((self.DD_OBJECT, self.DD_VTABLE), (self.DD_PRIMARY, self.SURFACE_VTABLE),
+                            (self.DD_OVERLAY, self.SURFACE_VTABLE), (self.DD_BACK, self.SURFACE_VTABLE)):
+            self.put(obj, vtable)
+            self.ddraw['refs'][obj] = 0
+
+    def reset_ddraw_counts(self):
+        """Per-session counters for the same ARM image across USB replugs."""
+        if getattr(self, 'ddraw', None) is None:
+            return
+        for key in ('loads', 'procs', 'creates', 'cooperative', 'caps_sizes', 'show_flags',
+                    'src_rects', 'lock_flags'):
+            self.ddraw[key].clear()
+        for key in ('frees', 'locks', 'unlocks', 'restores', 'is_lost', 'enums', 'shows', 'hides',
+                    'flips', 'flip_status'):
+            self.ddraw[key] = 0
+        self.ddraw['frame'] = None
+        self.ddraw['refs'] = {address: 0 for address in self.ddraw['refs']}
+
+    def LoadLibraryW(self, name, *_):
+        label = self.text(name)
+        self.ddraw['loads'].append(label)
+        if getattr(self, 'ddraw', None) is None or self.ddraw['mode'] == 'library':
+            return 0
+        assert label in ('DDRAW.dll', '\\Windows\\DDRAW.dll')
+        return self.DD_MODULE
+
+    def GetProcAddressA(self, module, name, *_):
+        label = self.ascii(name)
+        self.ddraw['procs'].append(label)
+        assert module == self.DD_MODULE and label == 'DirectDrawCreate'
+        return 0 if self.ddraw['mode'] == 'proc' else self.hook('DdrawCreate')
+
+    def FreeLibrary(self, module, *_):
+        assert module == self.DD_MODULE
+        self.ddraw['frees'] += 1
+        return 1
+
+    def DdrawUnused(self, *_):
+        return 0
+
+    def DdrawCreate(self, _guid, output, _outer, *_):
+        if self.ddraw['mode'] == 'create':
+            return 0xffffffff
+        self.put(output, self.DD_OBJECT)
+        self.ddraw['refs'][self.DD_OBJECT] = 1
+        return 0
+
+    def DdrawRelease(self, obj, *_):
+        refs = self.ddraw['refs']
+        refs[obj] = max(0, refs.get(obj, 0) - 1)
+        return refs[obj]
+
+    def DdrawAddRef(self, obj, *_):
+        refs = self.ddraw['refs']
+        refs[obj] = refs.get(obj, 0) + 1
+        return refs[obj]
+
+    def DdrawSetCooperativeLevel(self, _obj, window, flags, *_):
+        self.ddraw['cooperative'].append((window, flags))
+        assert flags == 0  # DDSCL_NORMAL; fullscreen would take the stock map.
+        return 0xffffffff if self.ddraw['mode'] == 'cooperative' else 0
+
+    def DdrawGetCaps(self, _obj, caps, _emulation, *_):
+        self.ddraw['caps_sizes'].append(self.word(caps))
+        if self.ddraw['mode'] == 'caps':
+            return 0xffffffff
+        self.put(caps + 0x48, self.ddraw['overlay_caps'])
+        return 0
+
+    def DdrawGetFourCCCodes(self, _obj, count_pointer, codes, *_):
+        if self.ddraw['mode'] == 'fourcc':
+            self.put(count_pointer, 0)
+            return 0
+        if not codes:
+            self.put(count_pointer, 3)
+        else:
+            self.cpu.mem_write(codes, struct.pack('<3I', 0, self.UYVY_FOURCC, 0x56555949))
+        return 0
+
+    def DdrawCreateSurface(self, _obj, desc, output, _outer, *_):
+        fields = {name: self.word(desc + offset) for name, offset in
+                  (('flags', 4), ('height', 8), ('width', 12), ('backbuffers', 24),
+                   ('pixel_size', 68), ('pixel_flags', 72), ('fourcc', 76), ('caps', 100))}
+        self.ddraw['creates'].append(fields)
+        index = len(self.ddraw['creates'])
+        surface = self.DD_PRIMARY if index == 1 else self.DD_OVERLAY
+        if self.ddraw['mode'] == 'surface' and index == 2:
+            return 0xffffffff
+        self.put(output, surface)
+        self.ddraw['refs'][surface] = 1
+        return 0
+
+    def DdrawEnumAttached(self, *_args):
+        self.ddraw['enums'] += 1
+        context = self.cpu.reg_read(UC_ARM_REG_R3)
+        if self.ddraw['flip'] and self.ddraw['mode'] != 'no-back':
+            self.put(context, self.DD_BACK)
+            refs = self.ddraw['refs']
+            refs[self.DD_BACK] = refs.get(self.DD_BACK, 0) + 1
+        return 1
+
+    def DdrawIsLost(self, *_):
+        self.ddraw['is_lost'] += 1
+        mode = self.ddraw['mode']
+        if mode == 'lost' and self.ddraw['is_lost'] == 1:
+            return self.SURFACE_LOST
+        if mode == 'restore':
+            return self.SURFACE_LOST
+        return 0
+
+    def DdrawRestore(self, *_):
+        self.ddraw['restores'] += 1
+        return 0xffffffff if self.ddraw['mode'] == 'restore' else 0
+
+    def DdrawLock(self, obj, _rect, desc, flags, _event, *_):
+        self.ddraw['locks'] += 1
+        self.ddraw['lock_flags'].append(flags)
+        if self.ddraw['mode'] == 'lock':
+            return 0xffffffff
+        pitch = 800 if self.ddraw['mode'] == 'bad-pitch' else 800 * 2 + 32
+        x_pitch = -2 if self.ddraw['mode'] == 'bad-xpitch' else 2
+        size = 0 if self.ddraw['mode'] == 'zero-fields' else self.SURFACE_BYTES
+        if self.ddraw['mode'] == 'zero-fields':
+            x_pitch = 0
+        self.put(desc, 108)
+        self.put(desc + 8, 480)
+        self.put(desc + 12, 800)
+        self.put(desc + 16, pitch)
+        self.put(desc + 20, x_pitch & 0xffffffff)
+        self.put(desc + 32, self.SURFACE_BASE)
+        self.put(desc + 104, size)
+        assert obj in (self.DD_OVERLAY, self.DD_BACK)
+        return 0
+
+    def DdrawUnlock(self, *_):
+        self.ddraw['unlocks'] += 1
+        if self.ddraw['capture'] and self.ddraw['frame'] is None:
+            self.ddraw['frame'] = bytes(self.cpu.mem_read(self.SURFACE_BASE, 2 * (800 * 2 + 32)))
+            self.cpu.mem_write(self.SURFACE_BASE, bytes([0xa5]) * len(self.ddraw['frame']))
+        return 0xffffffff if self.ddraw['mode'] == 'unlock' else 0
+
+    def DdrawUpdateOverlay(self, _obj, src, _dest, _dest_rect, flags, fx, *_):
+        assert self.word(fx) == 28
+        if flags & 0x400:
+            self.ddraw['shows'] += 1
+            self.ddraw['show_flags'].append(flags)
+            self.ddraw['src_rects'].append(tuple(
+                struct.unpack('<4i', self.cpu.mem_read(src, 16))) if src else None)
+            if self.ddraw['mode'] == 'overlay':
+                return 0xffffffff
+            if self.ddraw['mode'] == 'overlay-lost' and self.ddraw['shows'] == 1:
+                return self.SURFACE_LOST
+        else:
+            self.ddraw['hides'] += 1
+        return 0
+
+    def DdrawFlip(self, *_):
+        self.ddraw['flips'] += 1
+        return 0xffffffff if self.ddraw['mode'] == 'flip' else 0
+
+    def DdrawFlipStatus(self, *_):
+        self.ddraw['flip_status'] += 1
+        return 0xffffffff if self.ddraw['mode'] == 'flip-timeout' else 0
 
 
 class UsbClient(Machine):
@@ -284,15 +510,20 @@ class UsbClient(Machine):
                 'debug': self.debug}
 
 
-class TlsUsbClient(UsbClient):
+class TlsUsbClient(UsbClient, DdrawDoubleMixin):
     timeout_us = 20_000_000
     instruction_limit = 160_000_000
     heap = 0x50000000
 
     def __init__(self, path, files, context, *, video=None, preempt=False, clock=None, silent=False,
-                 video_deadline=False, handshake_reply=None, interleave_control=False):
+                 video_deadline=False, handshake_reply=None, interleave_control=False, ddraw_mode=None):
         super().__init__(path, 'version')
-        self.rgb565 = artifact_video_format(path) == 'rgb565'
+        self.video_format = artifact_video_format(path)
+        self.rgb565 = self.video_format == 'rgb565'
+        if self.video_format == 'ddraw':
+            self.install_ddraw_double(flip=json.loads(
+                path.with_name('abi.json').read_text(encoding='utf-8')).get(
+                    path.name, {}).get('ddraw_flip', False), mode=ddraw_mode)
         self.rejected_rgb565 = False
         self.blit_times = []
         self.files = files
@@ -313,6 +544,7 @@ class TlsUsbClient(UsbClient):
         self.handshake_reply = handshake_reply
         self.interleave_control = interleave_control
         self.owner = 0x9000 if video else 0
+        self.camera_active = False
         self.projected = 0
         self.video_acks = 0
         self.pongs = 0
@@ -320,6 +552,34 @@ class TlsUsbClient(UsbClient):
         self.audio_focus_denied = False
         self.allocations = {}
         self.next_heap = self.heap
+
+    def CreateEventW(self, attrs, manual, initial, name, *_):
+        label = self.text(name)
+        if label.endswith('StockDisplay.Safe.1'):
+            self.events[21] = 'StockDisplay.Safe'
+            self.event_error = 183
+            return 21
+        if label.endswith('StockCamera.Active.1'):
+            self.events[22] = 'StockCamera.Active'
+            self.event_error = 183
+            return 22
+        return super().CreateEventW(attrs, manual, initial, name, *_)
+
+    def WaitForSingleObject(self, handle, milliseconds, *_):
+        if handle in (21, 22):
+            return 0 if handle == 21 or self.camera_active else 258
+        return super().WaitForSingleObject(handle, milliseconds, *_)
+
+    def painted_frames(self):
+        """Count one visible presentation per ACKed frame, including fallback.
+
+        DirectDraw and GDI are alternatives for the same decoded frame. Counting
+        both would double-count rejected frames that showed a stale overlay
+        before the same-frame BGRA/GDI fallback.
+        """
+        if self.video_format != 'ddraw':
+            return self.projected
+        return self.projected or self.ddraw['shows']
 
     def service_frame(self, message, channel=0, flags=0, *, fragment=None, between=None):
         if fragment is not None:
@@ -419,19 +679,22 @@ class TlsUsbClient(UsbClient):
         elif code == 0x8004:
             assert message[2:] == b'\x08\x23\x10\x01'
             self.video_acks += 1
+            painted = self.painted_frames()
             if self.video_deadline:
-                assert self.video_acks == self.projected == 1
+                assert self.video_acks == painted == 1
                 self.ms += 20000
                 self.service_frame(bytes(10) + self.video, 3)
             elif self.preempt and self.video_acks == 1:
-                assert self.projected == 1
+                assert painted == 1
                 self.owner = 0x9001
                 self.service_frame(bytes(10) + self.video, 3)
             elif self.preempt and self.video_acks == 2:
-                assert self.projected == 1
+                # The preemption frame is ACKed before it is shown on the
+                # restored surface; the third frame completes the handoff.
+                assert painted == 1
                 self.owner = 0x9000
             else:
-                assert self.projected == (2 if self.preempt else 1)
+                assert painted == (2 if self.preempt else 1)
                 self.service_frame(b'\x00\x0f\x08\x01')
         else:
             raise AssertionError(f'Unexpected video response {code:#x}')
@@ -650,6 +913,7 @@ class NativeUsbStress(TlsUsbClient):
         for queue in (self.pending, self.received, self.signaled, self.debug, self.wire_writes,
                       self.touch_reports, self.frame_times):
             queue.clear()
+        self.reset_ddraw_counts()
         self.gesture_index = self.projected = self.video_acks = self.peak_bytes = 0
         self.services = self.peer_error = None
         self.authenticated = self.closed_gracefully = self.input_bound = self.goodbye_sent = False
@@ -732,7 +996,7 @@ class NativeUsbStress(TlsUsbClient):
                 self.tested_ipc_timeout = True
                 self.ms += timeout
                 return 0
-            if self.projected and self.gesture_index < len(self.gesture):
+            if self.painted_frames() and self.gesture_index < len(self.gesture):
                 action, x, y = self.gesture[self.gesture_index]
                 self.gesture_index += 1
                 sample = (action + 2) << 19 | y << 10 | x
@@ -1115,7 +1379,8 @@ def test_tls(path, openssl, exercise_projection=False, reject_rgb565=False):
                 projected = TlsUsbClient(path, files, context, video=sample, preempt=preempt,
                                          video_deadline=deadline, interleave_control=interleaved)
                 result = projected.attach()
-                assert projected.projected == (2 if preempt else 1) and not projected.allocations, result
+                painted = projected.painted_frames()
+                assert painted == (2 if preempt else 1) and not projected.allocations, result
                 assert projected.video_acks == (3 if preempt else 1)
                 assert projected.closed_gracefully != deadline
                 assert projected.audio_focus_denied
@@ -1123,7 +1388,18 @@ def test_tls(path, openssl, exercise_projection=False, reject_rgb565=False):
                 assert projected.ms >= 8900
                 assert projected.focus_history == ([(1, 0), (2, 1), (1, 1)] if preempt else [(1, 0)])
                 assert 'i30 CE projection frame presented.' in result['debug']
-                report[mode] = result['debug'][2:]
+                if projected.video_format == 'ddraw':
+                    assert projected.ddraw['shows'] == painted
+                    assert projected.ddraw['locks'] == projected.ddraw['unlocks'] == painted
+                    assert not projected.blit_times
+                    assert all(count == 0 for count in projected.ddraw['refs'].values())
+                    report[mode] = {'debug': result['debug'][2:], 'ddraw': {
+                        'shows': projected.ddraw['shows'], 'locks': projected.ddraw['locks'],
+                        'unlocks': projected.ddraw['unlocks'], 'hides': projected.ddraw['hides'],
+                        'live_references': sum(projected.ddraw['refs'].values())}}
+                else:
+                    assert projected.projected == painted
+                    report[mode] = result['debug'][2:]
             if reject_rgb565:
                 assert artifact_video_format(path) == 'rgb565', 'fallback fixture requires an RGB565 build'
                 fallback = TlsUsbClient(path, files, context, video=sample)
@@ -1467,7 +1743,7 @@ def test_separate_video_config(path, files, peer, access_unit):
         config_acks = 0
 
         def send_video(self, _index):
-            assert self.projected == self.config_acks
+            assert self.painted_frames() == self.config_acks
             self.pending_config = True
             self.service_frame(b'\x00\x01' + config, 3, fragment=9,
                                between=b'\x00\x0b\x08\x7b')
@@ -1476,7 +1752,7 @@ def test_separate_video_config(path, files, peer, access_unit):
             if message.startswith(b'\x80\x04'):
                 assert flags == 11 and message[2:] == b'\x08\x23\x10\x01'
                 if self.pending_config:
-                    assert self.projected == self.config_acks
+                    assert self.painted_frames() == self.config_acks
                     self.pending_config = False
                     self.config_acks += 1
                     self.service_frame(struct.pack('>HQ', 0, self.ms * 1000) + picture, 3, fragment=11)
@@ -1486,9 +1762,9 @@ def test_separate_video_config(path, files, peer, access_unit):
     guest = SeparateConfig(path, files, peer, [picture] * 2, restart=True)
     result = guest.attach()
     assert guest.authenticated and guest.closed_gracefully and not guest.allocations, result
-    assert guest.config_acks == guest.projected == guest.video_acks == guest.pongs == 2, result
+    assert guest.config_acks == guest.painted_frames() == guest.video_acks == guest.pongs == 2, result
     return {'config_nals': [7, 8], 'config_ack_count': guest.config_acks,
-            'timed_idr_ack_count': guest.video_acks, 'painted': guest.projected,
+            'timed_idr_ack_count': guest.video_acks, 'painted': guest.painted_frames(),
             'interleaved_pongs': guest.pongs, 'live_allocations_after_close': len(guest.allocations)}
 
 
@@ -1508,18 +1784,18 @@ def test_stress(path, openssl, rounds):
             guest = NativeUsbStress(path, files, peer, frames, fps=fps)
             result = guest.attach()
             assert guest.authenticated and guest.closed_gracefully and guest.input_bound, result
-            assert guest.projected == guest.video_acks == len(frames), result
+            assert guest.painted_frames() == guest.video_acks == len(frames), result
             assert [event[:3] for event in guest.touch_reports] == list(guest.gesture), result
             assert not guest.allocations and not guest.video_active and not guest.touch_armed, result
             streams.append({'nominal_fps': fps, 'sent': len(frames), 'acked': guest.video_acks,
-                            'painted': guest.projected, 'keyframes': sum(item[1] for item in packets),
+                            'painted': guest.painted_frames(), 'keyframes': sum(item[1] for item in packets),
                             'bytes': sum(map(len, frames)), 'peak_guest_requested_bytes': guest.peak_bytes,
                             'frame_ack_wall_ms': guest.frame_times, 'touches': guest.touch_reports})
 
         keepalive = NativeUsbStress(path, files, peer, one_frame, soak=True)
         result = keepalive.attach()
         assert keepalive.closed_gracefully and keepalive.pongs == 180, result
-        assert keepalive.projected == keepalive.video_acks == 5 and not keepalive.allocations, result
+        assert keepalive.painted_frames() == keepalive.video_acks == 5 and not keepalive.allocations, result
         assert keepalive.long_checkpoints == [60, 300, 900, 1800], result
 
         abrupt = {}
@@ -1527,8 +1803,8 @@ def test_stress(path, openssl, rounds):
             guest = NativeUsbStress(path, files, peer, one_frame, failure=failure)
             result = guest.attach()
             assert not guest.closed_gracefully and not guest.allocations and not guest.video_active and not guest.touch_armed, result
-            assert guest.projected == (failure in ('touch', 'reverse')), result
-            abrupt[failure] = {'painted': guest.projected, 'touch_reports': len(guest.touch_reports),
+            assert guest.painted_frames() == (failure in ('touch', 'reverse')), result
+            abrupt[failure] = {'painted': guest.painted_frames(), 'touch_reports': len(guest.touch_reports),
                                'cleared_allocations': len(guest.allocations), 'transfers_closed': result['closed_transfers']}
 
         invalid_video = {
@@ -1545,7 +1821,7 @@ def test_stress(path, openssl, rounds):
                                     'live_allocations_after_close': len(guest.allocations)}
         restarted = NativeUsbStress(path, files, peer, one_frame * 2, restart=True)
         result = restarted.attach()
-        assert restarted.closed_gracefully and restarted.projected == restarted.video_acks == 2, result
+        assert restarted.closed_gracefully and restarted.painted_frames() == restarted.video_acks == 2, result
         assert not restarted.allocations and not restarted.video_active, result
         separate_config = test_separate_video_config(path, files, peer, one_frame[0])
 
@@ -1565,7 +1841,7 @@ def test_stress(path, openssl, rounds):
             if index > 1:
                 guest.reconnect(peer)
             result = guest.attach()
-            assert guest.closed_gracefully and guest.video_acks == guest.projected == 1, result
+            assert guest.closed_gracefully and guest.video_acks == guest.painted_frames() == 1, result
             assert [event[:3] for event in guest.touch_reports] == list(guest.gesture), result
             assert not guest.allocations and not guest.video_active and not guest.touch_armed, result
             peak.add(guest.peak_bytes)
@@ -1573,7 +1849,7 @@ def test_stress(path, openssl, rounds):
                 milestones.append(index)
         guest.cpu.hook_del(guest.dispatch_hook)
         return {'streams': streams, 'resident_virtual_seconds': keepalive.long_checkpoints,
-                'resident_pongs': keepalive.pongs, 'resident_painted_frames': keepalive.projected,
+                'resident_pongs': keepalive.pongs, 'resident_painted_frames': keepalive.painted_frames(),
                 'abrupt_cleanup': abrupt, 'video_oversize_rejected': True, 'video_restart_painted_frames': 2,
                 'input_while_phone_idle': idle_input, 'separate_codec_config': separate_config,
                 'rejected_video': rejected_video,

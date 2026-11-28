@@ -15,9 +15,10 @@ typedef struct I30VideoTarget {
     void *context;
     CE_HANDLE (*begin)(void *context);
     void (*end)(void *context, CE_HANDLE dc);
-#ifdef I30_VIDEO_UYVY_STAGING
-    /* Optional synchronous I420 consumer. Return 1 on success or 0 to use
-     * GDI. The decoder owns the input and may reuse it after this call. */
+#if defined(I30_VIDEO_UYVY_STAGING) || defined(I30_VIDEO_UYVY_DIRECTDRAW)
+    /* Optional synchronous I420 consumer. Return 1 only when the caller has
+     * visibly consumed the frame; 0 reuses this same decoded frame for GDI.
+     * The decoder owns the input and may reuse it after this call. */
     int (*present_yuv)(void *context, const I30VideoGeometry *geometry, const uint8_t *i420);
 #endif
 } I30VideoTarget;

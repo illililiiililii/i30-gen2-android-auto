@@ -10,6 +10,9 @@
 #include <string.h>
 #include "ce_aa_uyvy_stage.h"
 #endif
+#ifdef I30_VIDEO_UYVY_DIRECTDRAW
+#include "ce_aa_uyvy_ddraw.h"
+#endif
 
 CE_HANDLE GetForegroundWindow(void);
 CE_HANDLE GetDC(CE_HANDLE);
@@ -61,6 +64,9 @@ typedef struct Projection {
 #endif
 #ifdef I30_VIDEO_UYVY_STAGING
     I30UyvyStage uyvy_stage;
+#endif
+#ifdef I30_VIDEO_UYVY_DIRECTDRAW
+    I30Ddraw ddraw;
 #endif
 } Projection;
 
@@ -179,6 +185,10 @@ static int fields(const uint8_t *bytes, unsigned size, uint32_t *field1, uint32_
 
 static void reset_video(Projection *video)
 {
+#ifdef I30_VIDEO_UYVY_DIRECTDRAW
+    /* Stop/replug/native handoff must not leave a stale overlay above the map. */
+    i30_ddraw_hide(&video->ddraw);
+#endif
     i30_video_close(video->decoder);
     video->decoder = 0;
     video->requested_focus = 0;
@@ -216,6 +226,35 @@ static void end_paint(void *window, CE_HANDLE dc)
     ReleaseDC(window, dc);
 #endif
 }
+
+#ifdef I30_VIDEO_UYVY_DIRECTDRAW
+/* The GDI fallback still needs the projection window as its context, while
+ * the UYVY consumer needs the DirectDraw state. Keep both in one wrapper so a
+ * rejected UYVY frame can reuse the same decoded frame for BGRA + GDI. */
+typedef struct DdrawTarget {
+    CE_HANDLE window;
+    I30Ddraw *backend;
+} DdrawTarget;
+
+static CE_HANDLE ddraw_begin(void *context)
+{
+    DdrawTarget *target = context;
+    return target ? begin_paint(target->window) : 0;
+}
+
+static void ddraw_end(void *context, CE_HANDLE dc)
+{
+    DdrawTarget *target = context;
+    if (target)
+        end_paint(target->window, dc);
+}
+
+static int ddraw_present(void *context, const I30VideoGeometry *geometry, const uint8_t *i420)
+{
+    DdrawTarget *target = context;
+    return target ? i30_ddraw_present(target->backend, geometry, i420) : 0;
+}
+#endif
 
 static int update_focus(const I30SecureChannel *wire, Projection *video, unsigned unsolicited)
 {
@@ -416,13 +455,27 @@ static int paint_packet(const I30SecureChannel *wire, Projection *video, unsigne
     uint32_t session = video->session;
     if (video->state != STREAMING || length <= prefix)
         return 0;
+    int can_paint = video->granted_focus != NATIVE && i30_projection_surface() == video->window;
 #ifdef I30_VIDEO_UYVY_STAGING
     const I30VideoTarget target = {&video->uyvy_stage, begin_paint, end_paint, i30_uyvy_stage};
+    const I30VideoTarget *chosen = &target;
+#elif defined(I30_VIDEO_UYVY_DIRECTDRAW)
+    /* Camera/native ownership is checked through the existing stock display
+     * event contract. If it is not safe, hide the overlay and keep the same
+     * decoded frame on the validated GDI path. */
+    DdrawTarget ddraw_context = {video->window, &video->ddraw};
+    int ddraw_allowed = can_paint && i30_ddraw_ready(&video->ddraw) &&
+                        !video->ddraw.disabled && i30_stock_display_safe();
+    const I30VideoTarget gdi_target = {video->window, begin_paint, end_paint, 0};
+    const I30VideoTarget ddraw_target = {&ddraw_context, ddraw_begin, ddraw_end, ddraw_present};
+    const I30VideoTarget *chosen = ddraw_allowed ? &ddraw_target : &gdi_target;
+    if (!ddraw_allowed)
+        i30_ddraw_hide(&video->ddraw);
 #else
     const I30VideoTarget target = {video->window, begin_paint, end_paint};
+    const I30VideoTarget *chosen = &target;
 #endif
-    int can_paint = video->granted_focus != NATIVE && i30_projection_surface() == video->window;
-    int rendered = i30_video_push(video->decoder, can_paint ? &target : 0, message + prefix, length - prefix);
+    int rendered = i30_video_push(video->decoder, can_paint ? chosen : 0, message + prefix, length - prefix);
     if (rendered < 0)
         return 0;
     if (rendered && !video->rendered) {
@@ -511,6 +564,10 @@ int i30_projection_video(const I30SecureChannel *wire, CE_HANDLE window, int inp
     else
         OutputDebugStringW(L"i30 CE UYVY diagnostic allocation failed; GDI fallback retained.\r\n");
 #endif
+#ifdef I30_VIDEO_UYVY_DIRECTDRAW
+    if (!i30_ddraw_open(video.window, &video.ddraw))
+        OutputDebugStringW(L"i30 CE UYVY DirectDraw unavailable; GDI fallback retained.\r\n");
+#endif
     while (update_focus(wire, &video, 1) && poll_touch(&video)) {
         unsigned channel, flags, code;
         uint8_t *message;
@@ -564,6 +621,9 @@ int i30_projection_video(const I30SecureChannel *wire, CE_HANDLE window, int inp
             OutputDebugStringW(L"i30 CE UYVY diagnostic packed frames; GDI fallback retained.\r\n");
         HeapFree(GetProcessHeap(), 0, video.uyvy_stage.surface);
     }
+#endif
+#ifdef I30_VIDEO_UYVY_DIRECTDRAW
+    i30_ddraw_close(&video.ddraw);
 #endif
     LocalFree(video_buffer);
     return graceful;

@@ -3,6 +3,9 @@
 #ifdef I30_VIDEO_UYVY_STAGING
 #include "ce_aa_uyvy.h"
 #endif
+#ifdef I30_VIDEO_UYVY_DIRECTDRAW
+#include "ce_aa_uyvy_ddraw.h"
+#endif
 
 CE_HANDLE GetDC(CE_HANDLE window);
 int ReleaseDC(CE_HANDLE window, CE_HANDLE dc);
@@ -60,6 +63,16 @@ void i30_ce_entry(void)
                     L"i30 CE UYVY staging unavailable.\r\n");
                 if (stage.bytes)
                     HeapFree(heap, 0, stage.bytes);
+#elif defined(I30_VIDEO_UYVY_DIRECTDRAW)
+                I30Ddraw ddraw;
+                const I30VideoTarget target = {&ddraw, begin_paint, end_paint, i30_ddraw_present};
+                if (i30_ddraw_open((CE_HANDLE)1, &ddraw)) {
+                    painted = i30_video_push(video, &target, bytes, length) > 0;
+                    i30_ddraw_close(&ddraw);
+                }
+                OutputDebugStringW(painted ?
+                    L"i30 CE UYVY DirectDraw presented a frame.\r\n" :
+                    L"i30 CE UYVY DirectDraw unavailable; GDI fallback used.\r\n");
 #else
                 const I30VideoTarget target = {0, begin_paint, end_paint};
                 painted = i30_video_push(video, &target, bytes, length) > 0;
@@ -71,7 +84,7 @@ void i30_ce_entry(void)
             HeapFree(heap, 0, bytes);
         CloseHandle(file);
     }
-#ifdef I30_VIDEO_UYVY_STAGING
+#if defined(I30_VIDEO_UYVY_STAGING) || defined(I30_VIDEO_UYVY_DIRECTDRAW)
     OutputDebugStringW(painted ? L"i30 CE H.264 output consumed.\r\n" : L"i30 CE H.264 video probe failed.\r\n");
 #else
     OutputDebugStringW(painted ? L"i30 CE H.264 picture painted.\r\n" : L"i30 CE H.264 video probe failed.\r\n");

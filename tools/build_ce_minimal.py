@@ -21,6 +21,7 @@ SECTION_FLAGS = {'.text': 0x60000020, '.rdata': 0x40000040, '.idata': 0xc0000040
 API = ('OutputDebugStringW', 'CreateFileW', 'ReadFile', 'CloseHandle', 'GetProcessHeap', 'HeapAlloc',
        'HeapFree', 'CreateThread', 'WaitForSingleObject', 'GetExitCodeThread', 'GetModuleFileNameW',
        'GetTickCount', 'ExitThread')
+DDRAW_LOADER_API = ('LoadLibraryW', 'GetProcAddressA', 'FreeLibrary')
 
 
 def align(value, boundary):
@@ -101,11 +102,18 @@ def main():
     variant = parser.add_mutually_exclusive_group()
     variant.add_argument('--settings', action='store_true', help='Build the interactive Android Auto settings test')
     variant.add_argument('--h264-source', type=Path, help='Build a CE video output probe with this h264bsd source tree')
-    parser.add_argument('--uyvy-staging', action='store_true',
-                        help='Pack decoded I420 into memory in the standalone video probe')
+    uyvy = parser.add_mutually_exclusive_group()
+    uyvy.add_argument('--uyvy-staging', action='store_true',
+                      help='Pack decoded I420 into memory in the standalone video probe')
+    uyvy.add_argument('--uyvy-ddraw', action='store_true',
+                      help='Route decoded I420 through the opt-in DirectDraw backend')
+    parser.add_argument('--ddraw-flip', action='store_true',
+                        help='With --uyvy-ddraw, request a back buffer and use Flip/GetFlipStatus')
     args = parser.parse_args()
-    if args.uyvy_staging and not args.h264_source:
-        parser.error('--uyvy-staging requires --h264-source')
+    if (args.uyvy_staging or args.uyvy_ddraw) and not args.h264_source:
+        parser.error('UYVY probes require --h264-source')
+    if args.ddraw_flip and not args.uyvy_ddraw:
+        parser.error('--ddraw-flip requires --uyvy-ddraw')
     compiler = args.compiler.resolve(strict=True)
     archiver = compiler.with_name(compiler.name.replace('gcc', 'ar')).resolve(strict=True)
     if archiver == compiler:
@@ -121,26 +129,41 @@ def main():
         headers = decoder / 'src'
         if not (headers / 'h264bsd_decoder.h').is_file() or not (decoder / 'LICENSE.md').is_file():
             parser.error('Expected the h264bsd repository with source and license')
-        output = ROOT / ('build/gd13my-ce-uyvy-staging' if args.uyvy_staging else 'build/gd13my-ce-video')
+        output_name = ('gd13my-ce-uyvy-staging' if args.uyvy_staging else
+                       'gd13my-ce-uyvy-ddraw' if args.uyvy_ddraw else 'gd13my-ce-video')
+        output = ROOT / ('build/' + output_name)
         output.mkdir(parents=True, exist_ok=True)
         api = ('CreateFileW', 'ReadFile', 'CloseHandle', 'GetProcessHeap', 'HeapAlloc', 'HeapFree',
                'GetDC', 'ReleaseDC', 'StretchDIBits', 'OutputDebugStringW', 'ExitThread')
+        if args.uyvy_ddraw:
+            api = (*api, *DDRAW_LOADER_API)
         with TemporaryDirectory(prefix='i30-ce-video-') as scratch:
             staging = Path(scratch)
             assembly = staging / 'ce_api.S'
             assembly.write_text(import_assembly(exports, api), encoding='ascii')
             elf = staging / 'i30video.elf'
-            defines = ['-DI30_VIDEO_UYVY_STAGING'] if args.uyvy_staging else []
+            defines, extra_units = [], []
+            if args.uyvy_staging:
+                defines = ['-DI30_VIDEO_UYVY_STAGING']
+            elif args.uyvy_ddraw:
+                defines = ['-DI30_VIDEO_UYVY_DIRECTDRAW']
+                if args.ddraw_flip:
+                    defines.append('-DI30_DDRAW_FLIP')
+                extra_units = [source / 'ce_aa_uyvy_ddraw.c']
             subprocess.run([compiler, '-march=armv4t', '-marm', '-Os', '-ffreestanding', '-fshort-wchar',
                             '-fno-stack-protector', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables',
                             '-ffunction-sections', '-fdata-sections', f'-I{headers}', '-nostdlib', '-static',
                             *defines, f'-Wl,--gc-sections,-T,{source / "ce_minimal.ld"}', '-o', elf, assembly,
-                            source / 'ce_aa_video.c', source / 'ce_aa_video_probe.c',
+                            source / 'ce_aa_video.c', source / 'ce_aa_video_probe.c', *extra_units,
                             *sorted(headers.glob('*.c')), '-lc', '-lgcc'], check=True, cwd=staging, timeout=90)
             probe = output / 'i30video.exe'
             probe.write_bytes(pe_image(*native_sections(elf), api=api))
             abi = inspect(probe, exports)
-            names = {'i30_video_push', 'stage_uyvy', 'h264bsdConvertToBGRA'}
+            abi['video_probe_format'] = ('uyvy-staging' if args.uyvy_staging else
+                                         'ddraw' if args.uyvy_ddraw else 'bgra')
+            abi['ddraw_flip'] = args.ddraw_flip
+            names = {'i30_video_push', 'stage_uyvy', 'h264bsdConvertToBGRA', 'i30_ddraw_open',
+                     'i30_ddraw_present', 'i30_ddraw_hide', 'i30_ddraw_close'}
             with elf.open('rb') as stream:
                 abi['video_probe_rvas'] = {
                     symbol.name: symbol['st_value'] - IMAGE_BASE

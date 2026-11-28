@@ -85,7 +85,7 @@ static uint16_t *frame565_buffer(I30Video *video)
 }
 #endif
 
-#if defined(I30_VIDEO_RGB565) || defined(I30_VIDEO_UYVY_STAGING)
+#if defined(I30_VIDEO_RGB565) || defined(I30_VIDEO_UYVY_STAGING) || defined(I30_VIDEO_UYVY_DIRECTDRAW)
 static uint32_t *bgra_fallback_buffer(I30Video *video)
 {
     if (!video->bgra_fallback)
@@ -147,7 +147,7 @@ static int paint_from_yuv565(I30Video *video, const I30VideoTarget *target,
 }
 #endif
 
-#if defined(I30_VIDEO_RGB565) || defined(I30_VIDEO_UYVY_STAGING)
+#if defined(I30_VIDEO_RGB565) || defined(I30_VIDEO_UYVY_STAGING) || defined(I30_VIDEO_UYVY_DIRECTDRAW)
 static int paint_from_yuv_bgra(I30Video *video, const I30VideoTarget *target,
                               const I30VideoGeometry *geometry, const uint8_t *data)
 {
@@ -159,7 +159,7 @@ static int paint_from_yuv_bgra(I30Video *video, const I30VideoTarget *target,
 }
 #endif
 
-#if !defined(I30_VIDEO_RGB565) && !defined(I30_VIDEO_UYVY_STAGING)
+#if !defined(I30_VIDEO_RGB565) && !defined(I30_VIDEO_UYVY_STAGING) && !defined(I30_VIDEO_UYVY_DIRECTDRAW)
 static int paint_bgra(storage_t *decoder, const I30VideoTarget *target, const I30VideoGeometry *geometry)
 {
     unsigned id, keyframe, errors;
@@ -193,11 +193,11 @@ static int paint(I30Video *video, const I30VideoTarget *target)
         h264bsdNextOutputPicture(decoder, &id, &keyframe, &errors);
         return 0;
     }
-#if defined(I30_VIDEO_RGB565) || defined(I30_VIDEO_UYVY_STAGING)
+#if defined(I30_VIDEO_RGB565) || defined(I30_VIDEO_UYVY_STAGING) || defined(I30_VIDEO_UYVY_DIRECTDRAW)
     const uint8_t *data = h264bsdNextOutputPicture(decoder, &id, &keyframe, &errors);
     if (!data)
         return 0;
-#ifdef I30_VIDEO_UYVY_STAGING
+#if defined(I30_VIDEO_UYVY_STAGING) || defined(I30_VIDEO_UYVY_DIRECTDRAW)
     if (target->present_yuv && target->present_yuv(target->context, &geometry, data))
         return 1;
 #endif
