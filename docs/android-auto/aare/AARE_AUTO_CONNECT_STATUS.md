@@ -31,7 +31,8 @@
 | Android의 USB accessory 기본 앱 선택 키는 manufacturer/model/version | INFERRED | Android framework `AccessoryFilter`가 세 값으로 기본 앱을 조회·저장. 실폰에서 변경 전후 선택 화면은 미확인 |
 | AOA version을 `1.0`→`2.0`으로 바꾸면 AARE는 계속 일치 | VERIFIED | AARE 필터는 version을 보지 않음. ARM fixture가 `2.0` 전송을 확인 |
 | AOA model을 `Android Open Automotive Protocol`로 바꾸면 AARE는 계속 일치 | VERIFIED | AARE 필터가 두 model을 허용. ARM fixture가 문자열 전송을 확인 |
-| Google AA가 version `2.0`을 거부하거나 새 기본 앱 선택을 유도할지 | UNKNOWN | 설치된 Google APK의 filter를 추출하지 않음. 공개 로그에는 `Android Open Automotive Protocol`도 처리 사례 있음 |
+| version `2.0` 실폰 세션은 TLS 이전에 실패 | VERIFIED | `build/aare-auto-connect-v2-image/live/gd13my-window-20261129-011311-411777.usb-host.log`: AOA 2 → `18d1:2d01` → pipe error → AAP version request `[Errno 5] Input/Output Error`. `AUTH_COMPLETE`, 서비스 탐색, 첫 프레임 없음. 이 실행의 폰 화면 문구는 보고되지 않음 |
+| Google AA가 version `2.0`을 거부하거나 새 기본 앱 선택을 유도할지 | UNKNOWN | 실폰 로그만으로 앱 소유자를 단정할 수 없음. 설치된 Google APK의 filter는 추출하지 않음 |
 | AARE를 USB accessory 기본 앱으로 한 번 선택하면 이후 자동 실행 가능 | INFERRED | AARE v1.6.0 README의 `AARE` + `Always` 안내와 exported `UsbAccessoryActivity`; 실폰 미검증 |
 | Google AA의 정확한 accessory filter 값 | UNKNOWN | 설치된 Google APK에서 추출하지 않음 |
 | 과거 성공 이미지와 v8/P0의 자동 실행 설정은 다름 | VERIFIED | 성공 이미지에는 `i30auto.opt`/`i30boot.opt`가 없고 수동 시작이었음. v8/P0는 `i30auto.opt=1`, `i30boot.opt=1`, `i30-aare.opt=1`로 자동 실행용임 |
@@ -49,6 +50,7 @@
 - **VERIFIED** — AARE의 필터는 model만 비교한다: `Android Auto`, `Android Open Automotive Protocol`. GD13MY의 현재 model `Android Auto`는 그대로 일치한다.
 - **VERIFIED** — 과거 수동 성공 이미지(`E:\...\gd13my-aare-settings-o2.img`)에는 `i30auto.opt`/`i30boot.opt`가 없고, v8/P0 자동 실행 이미지에는 둘 다 있다. 자동 실행 자체는 과거 수동 성공과 다른 조건이지만, v8은 신규 세션과 물리 재연결 성공도 문서화했다.
 - **VERIFIED** — v8과 P0는 `tls_profile=aare`, `usb_connect=true`, `boot_wait=true`, UTC 오프셋이 같고 `i30usb.dll`만 다르다. 두 DLL의 AOA 문자열 값과 오프셋은 같다. Google AA 선점은 DLL 해시 차이로 설명되지 않는다.
+- **INFERRED** — 공개 GrapheneOS 미러의 Google Android Auto `179664044` `base.apk`(SHA-256 `115228a7af416c4c56ee21e1d7eb2d97d5ac8158799f8becacbbc83fb2709c52`) manifest에는 `MANAGE_USB`, `android.hardware.usb.accessory`, `USB_ACCESSORY_ATTACHED/HANDSHAKE/DETACHED` 필터와 accessory filter 리소스 `@0x7f180004`가 있다. 같은 `resources.arsc`에서 `Android Auto` 문자열 215건, `Android Open Automotive Protocol` 0건을 확인했다. 설치된 폰 빌드가 아니고 리소스 값 자체를 복원하지 못했으므로 설치 APK의 정확한 filter는 여전히 `UNKNOWN`이다. [GrapheneOS 앱 미러](https://apps.grapheneos.org/packages/com.google.android.projection.gearhead/179664044/base.apk)
 - **UNKNOWN** — Google AA의 정확한 AOA filter, 오류 코드 16의 의미, 그리고 version/model 변경이 실제 폰의 기본 앱 선택을 바꾸는지.
 
 원본 이미지·바이너리 해시와 추출 문자열은 `C:\Users\Admin\AppData\Local\Temp\opencode\aare_physical_compare_out\result.json`에 있다. 이 임시 산출물은 실폰 결과가 아니라 파일 대조 증거다.
@@ -71,7 +73,9 @@
 
 세 변형의 `emulate_ce_usb.py --projection --stress-rounds 3 --navigation <v8 GDdNavi.exe>`는 모두 종료 코드 0이었다. 전체 Python 회귀는 98 run, 1 skip, 실패 0이다.
 
-실폰 후보 이미지는 `build/aare-auto-connect-v2-image/gd13my-aa-autostart-v2.img`다. 이미지 SHA-256은 `78e39559d4b95702e41dd1fae08cb9197228fbc56e35c767253fb2f81b1ef5ab`이며, v8과 같은 순정 파일·표시 패치·시작 패치·AARE 신원·자동 실행 옵션(`usb_connect=true`, `boot_wait=true`)을 쓰고 `i30usb.dll`만 `2.0` version으로 바꿨다. `emulate_gd13my_startup.py <v8 uComH_New.exe>`도 종료 코드 0이었다. 아직 실폰에서 실행하지 않았다.
+실폰 후보 이미지 `build/aare-auto-connect-v2-image/gd13my-aa-autostart-v2.img`(SHA-256 `78e39559d4b95702e41dd1fae08cb9197228fbc56e35c767253fb2f81b1ef5ab`)는 v8과 같은 순정 파일·표시 패치·시작 패치·AARE 신원·자동 실행 옵션으로 `i30usb.dll`만 `2.0` version으로 바꿨다. 실폰 실행은 위 로그처럼 AAP version request에서 실패했고, 화면 보고가 없어 Google AA/AARE 중 앱 소유자는 `UNKNOWN`이다.
+
+두 번째 후보 이미지는 `build/aare-auto-connect-oap-image/gd13my-aa-autostart-oap.img`다. 이미지 SHA-256은 `34ebac108c5bee41c754a94cac7912e951dd0840581138d5e6ba65f126d8ec46`이며, v2와 같은 순정 파일·표시 패치·시작 패치·AARE 신원·자동 실행 옵션(`usb_connect=true`, `boot_wait=true`)을 쓰고 `i30usb.dll`만 `Android Open Automotive Protocol` model로 바꿨다. 내비/표시 패치 디렉터리는 v8과 같은 `build/gd13my-aa-autostart-v8/navigation`과 `build/codex-authentication-resolution/display`를 사용했고, 다른 패치 디렉터리에서 나온 최초 빌드는 폐기했다. ARM projection/stress/navigation fixture와 startup fixture는 종료 코드 0이었다. 신규 상태 DB `build/aare-auto-connect-oap-image/live-user-diska.sqlite3`로 뷰어를 시작했고 실폰 재연결 입력을 기다린다.
 
 ## 작업 분해
 
@@ -80,8 +84,8 @@
 1. 과거 연결 성공 이미지, 현재 안정판, 실제 로드되는 `i30usb.dll`, AOA 문자열, 장치 매칭 조건, 인증서 프로파일, 자동 실행 옵션, 에뮬레이터 전달 경로를 실제 바이너리 기준으로 비교한다.
 2. AARE 1.6.0 APK의 manifest, USB accessory filter, `USB_ACCESSORY_ATTACHED` 처리, 권한 요청, 자동 실행 조건을 정적 분석했다. AARE는 model만 보고, GD13MY의 `Android Auto` model과 일치한다.
 3. AARE는 model만 보므로 firmware가 보낼 수 있는 값은 `Android Auto` 또는 `Android Open Automotive Protocol` 두 가지뿐이다. manufacturer/description은 앱 선택 해결책이 아니다.
-4. **첫 후보는 version `2.0`이다.** AARE는 version을 무시하지만 Android의 기본 앱 키에는 version이 들어간다. 따라서 기존 Google AA 기본 선택을 건드리지 않고 새 accessory identity에 대한 앱 선택을 유도할 가능성이 있다. 성공한다고 가정하지 않고 한 번에 이 변수만 바꿔 실폰에서 검증한다.
-5. version 후보가 실패하면 두 번째 변수로 model을 `Android Open Automotive Protocol`로 바꾼다. Google AA가 이 model도 처리할 수 있으므로 단독 해결책으로 가정하지 않는다.
+4. **첫 후보 version `2.0`은 실폰에서 AAP version request 실패로 끝났다.** AARE는 version을 무시하지만 Android의 기본 앱 키에는 version이 들어간다. 실제 세션에서 TLS 이전에 실패했고 화면 보고가 없어 앱 소유자는 확정하지 않았다.
+5. 두 번째 변수로 model을 `Android Open Automotive Protocol`로 바꿨다. Google AA가 이 model도 처리할 수 있으므로 단독 해결책으로 가정하지 않는다.
 6. 선택 화면에서 AARE + `Always`를 한 번 설정한 뒤, 이후 재연결에서 Google AA 설정 변경이나 강제 종료 없이 AARE가 자동 실행되는지 확인한다. 단순히 Google AA가 실행되지 않는 것은 성공이 아니다. AARE 자동 실행, TLS 상호 인증, 첫 프레임까지 확인한다.
 7. Google AA의 정확한 filter가 필요하면 ADB 진단으로 설치 APK의 manifest/filter를 확인한다. 실제 사용 경로에서는 ADB가 필요하지 않아야 한다.
 
@@ -111,11 +115,11 @@ USB 인식, AOA 전환, 재열거, AAP 버전, TLS, 서비스 탐색, 첫 영상
 
 아래는 에뮬레이터가 대신할 수 없으므로 화면/케이블 조작을 요청한다.
 
-- version `2.0` 이미지로 부팅한 뒤, 앱 선택 화면이 나오면 AARE + `Always` 선택
+- OAP model 이미지로 부팅한 뒤, 앱 선택 화면이 나오면 AARE + `Always` 선택
 - AARE 최초 실행, P12 가져오기, 수신기 지문 승인(이미 등록됐다면 불필요)
 - 물리 USB 분리/재연결, 폰 잠금 해제, 권한 dialog 승인
 - 실제 폰에서 앱 목록/터치/티맵 화면 확인
-- version 후보에서 Google AA가 여전히 열리면 model 후보로 한 변수만 바꿔 재시험
+- OAP 후보에서 Google AA 화면이나 오류 문구가 나오면 화면 문구를 그대로 보고
 
 Google AA 강제 종료, 사용 중지, 설정 변경은 최종 절차에 포함하지 않는다. 다만 진단 중 이미 열린 Google AA 세션을 닫아야 하는지는 로그와 화면으로 판단한다.
 

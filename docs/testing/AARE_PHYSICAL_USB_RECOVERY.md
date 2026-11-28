@@ -60,3 +60,11 @@ AARE도 Google Android Auto와 같은 AOA 2/AAP 초기 전송을 사용하므로
 관련 Python 시험 10개가 통과했다. 전체 회귀는 98개 중 97개 통과, 네이티브 GPTimer DLL 환경 조건으로 1개 건너뜀이다. 새 DLL의 ARM fixture는 AAP 타임아웃 및 버전 도중 분리에서 USB 인터페이스 인수와 AAP `Failure` 이벤트, 파이프 정리를 함께 확인했다. 버전 성공, 설정, TLS, 투사 및 순정 터치 경로도 통과했다. 원본은 `build/p0-usb-repro/unittest-candidate.log`와 `arm-candidate-regression.json`이다.
 
 실폰 시험에서 두 자동 실행 옵션을 각각 켠 구성, 둘 다 끈 구성, 후방카메라 선점 및 비정상 프로세스 종료 복구는 미검증이다. 순정 부팅 경고 동의 입력은 약 2초에 자동으로 발생하지 않았다. 이전 시험판에서 자동 동의가 제거된 기록이 있다. [부팅 경고 이력](PHASE7_8_RESULTS.md)
+
+## 2026-11-29: AOA version `2.0` 실폰 시도
+
+`build/aare-auto-connect-v2-image/gd13my-aa-autostart-v2.img`(SHA-256 `78e39559d4b95702e41dd1fae08cb9197228fbc56e35c767253fb2f81b1ef5ab`)를 신규 상태 DB `build/aare-auto-connect-v2-image/live-user-diska.sqlite3`로 실행했다. 이 이미지는 v8과 같은 설정·패치·신원을 쓰고 `i30usb.dll`만 `Android Auto` model + version `2.0`으로 바꿨다. USB 추적 `build/aare-auto-connect-v2-image/live/gd13my-window-20261129-011311-411777.usb-host.log`에서 `18d1:2d01` 재열거까지 확인했으나, 기능 요청 두 건의 `[Errno 32] Pipe error` 뒤 AAP version request가 엔드포인트 `0x01`에서 `[Errno 5] Input/Output Error`로 실패했다. `TLS 1.2`, `AUTH_COMPLETE`, 서비스 탐색, 첫 프레임은 없다. 이 실행의 폰 화면 문구는 보고되지 않았으므로 Google AA 소유 여부는 `UNKNOWN`이다. [자동 연결 상태](../android-auto/aare/AARE_AUTO_CONNECT_STATUS.md)
+
+## 2026-11-29: AOA model `Android Open Automotive Protocol` 이미지 준비
+
+두 번째 단일 변수 후보 `build/aare-auto-connect-oap-image/gd13my-aa-autostart-oap.img`(SHA-256 `34ebac108c5bee41c754a94cac7912e951dd0840581138d5e6ba65f126d8ec46`)를 만들었다. v2와 같은 순정 파일·표시 패치·시작 패치·AARE 신원·자동 실행 옵션을 유지했고, `i30usb.dll`만 `Android Open Automotive Protocol` / version `1.0`(SHA-256 `e8eb02a5eafb205ee418ac071f6ab15ff38160d2ac585ce26837203ef8166c2c`)으로 바꿨다. 매니페스트 `build/aare-auto-connect-oap-image/image.json`의 나머지 해시와 UTC 오프셋은 v8/v2와 같다. ARM projection/stress/navigation fixture와 startup fixture는 종료 코드 0이었다. 신규 상태 DB `build/aare-auto-connect-oap-image/live-user-diska.sqlite3`로 뷰어를 시작했고, 물리 케이블 재연결과 화면 확인을 기다린다. 성공 판정은 AARE TLS 인증, `AUTH_COMPLETE`, 서비스 탐색, 첫 프레임이다.
