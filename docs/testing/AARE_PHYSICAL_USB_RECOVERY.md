@@ -46,7 +46,7 @@ AARE도 Google Android Auto와 같은 AOA 2/AAP 초기 전송을 사용하므로
 
 당시 진단 복구 순서: Google Android Auto 세션을 닫고 AARE를 포그라운드에 둔 뒤 USB 앱 선택 화면에서 AARE를 선택했다. 연결을 해제한 상태에서 뷰어가 켜진 뒤 케이블을 약 3초 분리했다가 같은 포트에 다시 연결했다. 그 후 USB 추적에서 AAP 1.7, TLS 1.2 상호 인증, 서비스 탐색, 첫 프레임이 재개되는지 확인했다.
 
-최종 흐름에서는 Google AA 강제 종료, 사용 중지, 설정 변경을 요구하지 않는다. 후속 `feature/aare-auto-connect`는 AARE 필터가 model만 본다는 정적 근거를 바탕으로, 기본 model을 유지한 채 AOA version `2.0`으로 새 accessory identity를 만들어 Android의 앱 선택을 AARE + `Always`로 한 번 설정하는 후보를 준비했다. 이는 아직 실폰 미검증이다. [자동 연결 작업 상태](../android-auto/aare/AARE_AUTO_CONNECT_STATUS.md)
+최종 흐름에서는 Google AA 강제 종료, 사용 중지, 설정 변경을 요구하지 않는다. 후속 `feature/aare-auto-connect`는 AARE 필터가 model만 본다는 정적 근거를 바탕으로, 기본 model을 유지한 채 AOA version `2.0`으로 새 accessory identity를 만들어 Android의 앱 선택을 AARE + `Always`로 한 번 설정하는 후보를 준비했다. 실제 시도 결과는 아래와 같다. [자동 연결 작업 상태](../android-auto/aare/AARE_AUTO_CONNECT_STATUS.md)
 
 ## 재현 기록
 
@@ -67,10 +67,24 @@ AARE도 Google Android Auto와 같은 AOA 2/AAP 초기 전송을 사용하므로
 
 ## 2026-11-29: AOA model `Android Open Automotive Protocol` 이미지 준비
 
-두 번째 단일 변수 후보 `build/aare-auto-connect-oap-image/gd13my-aa-autostart-oap.img`(SHA-256 `34ebac108c5bee41c754a94cac7912e951dd0840581138d5e6ba65f126d8ec46`)를 만들었다. v2와 같은 순정 파일·표시 패치·시작 패치·AARE 신원·자동 실행 옵션을 유지했고, `i30usb.dll`만 `Android Open Automotive Protocol` / version `1.0`(SHA-256 `e8eb02a5eafb205ee418ac071f6ab15ff38160d2ac585ce26837203ef8166c2c`)으로 바꿨다. 매니페스트 `build/aare-auto-connect-oap-image/image.json`의 나머지 해시와 UTC 오프셋은 v8/v2와 같다. ARM projection/stress/navigation fixture와 startup fixture는 종료 코드 0이었다. 신규 상태 DB `build/aare-auto-connect-oap-image/live-user-diska.sqlite3`로 뷰어를 시작했고, 물리 케이블 재연결과 화면 확인을 기다린다. 성공 판정은 AARE TLS 인증, `AUTH_COMPLETE`, 서비스 탐색, 첫 프레임이다.
+두 번째 단일 변수 후보 `build/aare-auto-connect-oap-image/gd13my-aa-autostart-oap.img`(SHA-256 `34ebac108c5bee41c754a94cac7912e951dd0840581138d5e6ba65f126d8ec46`)를 만들었다. v2와 같은 순정 파일·표시 패치·시작 패치·AARE 신원·자동 실행 옵션을 유지했고, `i30usb.dll`만 `Android Open Automotive Protocol` / version `1.0`(SHA-256 `e8eb02a5eafb205ee418ac071f6ab15ff38160d2ac585ce26837203ef8166c2c`)으로 바꿨다. 매니페스트 `build/aare-auto-connect-oap-image/image.json`의 나머지 해시와 UTC 오프셋은 v8/v2와 같다. ARM projection/stress/navigation fixture와 startup fixture는 종료 코드 0이었다. 신규 상태 DB `build/aare-auto-connect-oap-image/live-user-diska.sqlite3`로 뷰어를 시작했고, 이후 물리 케이블 재연결과 화면 확인 결과는 아래와 같다. 성공 판정은 AARE TLS 인증, `AUTH_COMPLETE`, 서비스 탐색, 첫 프레임이다.
 
-실폰 재연결 결과는 version 후보와 같았다. `build/aare-auto-connect-oap-image/live/gd13my-window-20261129-020606-027911.usb-host.log`에 `18d1:2d01` 재열거, 기능 요청의 `[Errno 32] Pipe error`, AAP version request의 `[Errno 5] Input/Output Error`가 순서대로 있다. TLS, `AUTH_COMPLETE`, 서비스 탐색, 첫 프레임은 없다. 사용자는 앱 선택 화면이나 화면 변화가 없 보고했다. **VERIFIED**: OAP model도 이 전화에서 pre-TLS 실패. **UNKNOWN**: 세션을 연 앱과 Google AA filter의 정확한 값.
+실폰 재연결 결과는 version 후보와 같았다. `build/aare-auto-connect-oap-image/live/gd13my-window-20261129-020606-027911.usb-host.log`에 `18d1:2d01` 재열거, 기능 요청의 `[Errno 32] Pipe error`, AAP version request의 `[Errno 5] Input/Output Error`가 순서대로 있다. TLS, `AUTH_COMPLETE`, 서비스 탐색, 첫 프레임은 없다. 사용자는 앱 선택 화면이나 화면 변화가 없다고 보고했다. **VERIFIED**: OAP model도 이 전화에서 pre-TLS 실패. 설치된 Google AA APK의 accessory filter 값도 확인했다. **UNKNOWN**: 이 세션을 연 앱. [USB 소유권 진단](../android-auto/aare/USB_OWNERSHIP_DIAGNOSIS_20261129.md)
 
 ## 2026-11-29: AOA manufacturer 단일 변경 후보
 
-세 번째 후보는 `build/aare-auto-connect-mfg-image/gd13my-aa-autostart-mfg.img`(SHA-256 `ae3390afc9c51a7a160ea5e92868a76f098b41a14a44b814089ed4db2937fd54`)다. model/version은 기본값 `Android Auto`/`1.0`으로 되돌리고 `i30usb.dll`의 manufacturer만 `i30 Research` → `i30 GD13MY AARE`(DLL SHA-256 `46d97934b26cfc0a2a841bb9b6043cc0b7e14f464295f2e6c76d161ba556e390`)로 바꿨다. AARE v1.6.0은 manufacturer를 필터에 쓰지 않아 매칭이 유지되고, Android accessory 기본 앱 키에는 manufacturer가 포함된다는 점을 이용한다. ARM projection/stress/navigation fixture, startup fixture, 전체 Python 회귀 98 run/1 skip/실패 0을 확인했다. 신규 상태 DB `build/aare-auto-connect-mfg-image/live-user-diska.sqlite3`로 뷰어를 시작했고 물리 재연결 입력을 기다린다.
+세 번째 후보는 `build/aare-auto-connect-mfg-image/gd13my-aa-autostart-mfg.img`(SHA-256 `ae3390afc9c51a7a160ea5e92868a76f098b41a14a44b814089ed4db2937fd54`)다. model/version은 기본값 `Android Auto`/`1.0`으로 되돌리고 `i30usb.dll`의 manufacturer만 `i30 Research` → `i30 GD13MY AARE`(DLL SHA-256 `46d97934b26cfc0a2a841bb9b6043cc0b7e14f464295f2e6c76d161ba556e390`)로 바꿨다. AARE v1.6.0은 manufacturer를 필터에 쓰지 않아 매칭이 유지되고, Android accessory 기본 앱 키에는 manufacturer가 포함된다는 점을 이용한다. ARM projection/stress/navigation fixture, startup fixture, 전체 Python 회귀 98 run/1 skip/실패 0을 확인했다. 이미지는 빌드만 했고 진단 단계에서 보류한다. agent가 시작한 viewer는 종료했으며 재실행하거나 물리 재연결을 다시 요청하지 않았다.
+
+## 2026-11-29: USB 소유권·전달 경로 진단
+
+ADB 진단으로 설치 APK, Android framework 이벤트, 저장된 accessory preference, CE→host 오류 경로와 과거 성공 이미지 인증 자료를 확인했다. 원본 로그·APK는 커밋하지 않고 `build/usb-ownership-diagnosis-20261129/`에 둔다.
+
+- **VERIFIED** — 설치 AARE 1.6.0의 filter는 model `Android Auto`와 `Android Open Automotive Protocol`뿐이다. manufacturer/description/version/serial은 보지 않는다.
+- **VERIFIED** — 설치 Google AA `18.0.664264-release`의 filter resource `0x7f180004`는 `res/9ii.xml`이며 `Android/Android Open Automotive Protocol`, `Android/Android Auto`, `Android/Android`를 허용한다.
+- **VERIFIED** — 현재 완충 로그의 02:34·02:35 구간에서 Android는 `USB_ACCESSORY_ATTACHED`를 `net.prototux.aare/.transport.UsbAccessoryActivity`로 해석·시작했다. Google AA는 같은 구간에서 accessory handshake와 승인까지 갔지만 `USB_ISSUE_FIRST_ACTIVITY_NOT_LAUNCHED`와 projection timeout을 기록했다.
+- **VERIFIED** — 현재 저장된 두 accessory preference는 모두 user 0의 `net.prototux.aare`를 가리킨다. chooser가 보이지 않았다는 사실만으로 과거 세션의 전역 기본 앱 상태를 추론하지 않는다.
+- **UNKNOWN** — v2/OAP 실폰 세션을 실제로 연 앱. 당시 before/after 폰 로그가 없어 현재 완충 로그를 그 세션에 확장하지 않는다.
+- **VERIFIED** — 성공 v8 로그에도 AOA string index 3/4의 `[Errno 32] Pipe error`가 있다. 실패를 구분하는 것은 bulk OUT AAP version request의 `[Errno 5] Input/Output Error`와 version response 부재다.
+- **VERIFIED** — 과거 수동 성공 이미지의 네 AARE 인증 자료 파일은 로컬 identity와 파일 단위 SHA-256이 일치한다. 폰에 등록된 client certificate 자체는 `UNKNOWN`이다.
+
+ADB는 진단에만 사용했고 최종 흐름의 사용자 의존성으로 추가하지 않았다. 상위 수준 판단 전까지 manufacturer 후보를 부팅하지 않고 추가 화면 보고나 재연결을 요청하지 않는다. 자세한 근거와 재현 메모는 [USB 소유권·전달 경로 진단](../android-auto/aare/USB_OWNERSHIP_DIAGNOSIS_20261129.md)에 있다.
