@@ -27,6 +27,6 @@ v8 게스트 자동 실행은 `b912009`에서 추가됐다. 실폰 USB 시험의
 
 이전 순정 Google Android Auto 신뢰 실패와 AARE 등록 인증서 성공은 다른 경로다. 실폰+에뮬레이터 성공은 실차 성공이 아니다. 기존 HARDWARE_READINESS의 자동 연결 설명은 v8 이전 상태이며 최신 자동 실행 상태는 PROGRESS와 FINAL_HANDOFF를 따른다.
 
-2026-11-28 23:52부터 P0 복구 이미지 뷰어가 실행 중이다. 새 상태 DB `build/p0-usb-repro/p0-fresh-agent-user-diska.sqlite3`로 부팅과 AOA 2 전환은 확인했으나 첫 AAP 버전 요청이 USB I/O 오류로 실패해 `AUTH_COMPLETE` 이전에 멈췄다. 사용자는 폰에서 Google Android Auto의 `통신 오류 16` 화면을 확인했다. 즉 이번 세션은 AARE가 아니라 Google AA가 액세서리를 열었다. 라이브 `0x8009`/`0x800A`, 첫 프레임·터치 캡처는 Google AA 종료 후 AARE를 포그라운드로 두고 물리 재연결해야 가능하다. 사용자가 직접 닫은 프로그램은 재실행하지 않는다. [최신 실폰 추적](testing/AARE_PHYSICAL_USB_RECOVERY.md#2026-11-28-재실행-aare-세션과-화면의-오류-16)
+2026-11-28 23:52부터 P0 복구 이미지 뷰어가 실행 중이다. 새 상태 DB `build/p0-usb-repro/p0-fresh-agent-user-diska.sqlite3`로 부팅과 AOA 2 전환은 확인했으나 첫 AAP 버전 요청이 USB I/O 오류로 실패해 `AUTH_COMPLETE` 이전에 멈췄다. 사용자는 폰에서 Google Android Auto의 `통신 오류 16` 화면을 확인했다. 즉 이번 세션은 AARE가 아니라 Google AA가 액세서리를 열었다. `feature/aare-auto-connect`는 AARE v1.6.0이 model만 필터링하고 GD13MY model이 이미 일치함을 확인했다. 기본 신원을 유지한 채 AOA version `2.0` 후보를 만들었으며, 실폰에서 새 앱 선택에 AARE + `Always`를 지정한 뒤 AAP/TLS/첫 프레임을 확인해야 한다. Google AA 강제 종료·비활성화는 최종 흐름에 포함하지 않는다. 사용자가 직접 닫은 프로그램은 재실행하지 않는다. [자동 연결 작업 상태](android-auto/aare/AARE_AUTO_CONNECT_STATUS.md), [최신 실폰 추적](testing/AARE_PHYSICAL_USB_RECOVERY.md#2026-11-28-재실행-aare-세션과-화면의-오류-16)
 
 사용자 보고: 티맵 분할 화면 차량 아이콘 위치 및 속도계 이상, 체감 성능 부족. 원인 및 수정 여부는 미검증. [다음 작업](NEXT_TASKS.md).

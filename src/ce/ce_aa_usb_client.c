@@ -199,9 +199,18 @@ static int control(UsbLink *link, CE_HANDLE device, uint8_t code, uint16_t index
     return finish(link, transfer, size, 0) == (int)size;
 }
 
+#ifndef I30_AOA_MODEL
+#define I30_AOA_MODEL "Android Auto"
+#endif
+#ifndef I30_AOA_VERSION
+#define I30_AOA_VERSION "1.0"
+#endif
+
 static int start_accessory(UsbLink *link, CE_HANDLE device)
 {
-    static const char identity[4][36] = {"i30 Research", "Android Auto", "i30 GD13MY USB test", "1.0"};
+    /* AARE v1.6.0 filters model only; model and version stay build-time diagnostic options. */
+    static const char identity[4][36] = {"i30 Research", I30_AOA_MODEL, "i30 GD13MY USB test",
+                                         I30_AOA_VERSION};
     uint8_t protocol[2];
     unsigned index, length;
     char payload[sizeof(identity[0])];

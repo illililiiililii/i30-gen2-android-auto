@@ -44,7 +44,9 @@ DiskA를 읽기 전용으로 열어 SHA-256을 비교했다. 아래 값은 앞 1
 
 AARE도 Google Android Auto와 같은 AOA 2/AAP 초기 전송을 사용하므로 CE 로그의 `WinCE Android Auto 버전 요청` 자체는 두 앱에서 동일하게 나올 수 있다. 그러나 폰 화면까지 확인한 이번 경우는 Google AA가 세션 소유자다. **VERIFIED**된 CE 측 실패 지점은 TLS 이전의 AAP 버전 교환이며, 인증서/P12/TLS 원인으로 넘어갈 근거는 아직 없다.
 
-복구 순서: Google Android Auto를 완전히 닫는다. 필요하면 최근 앱에서 종료하거나 앱 설정에서 강제 종료한다. 그다음 AARE를 열어 포그라운드에 두고, USB 앱 선택 화면이 나오면 AARE를 선택한다. 연결을 해제한 상태에서 뷰어가 켜진 뒤 케이블을 약 3초 분리했다가 같은 포트에 다시 연결한다. 그 후 USB 추적에서 AAP 1.7, TLS 1.2 상호 인증, 서비스 탐색, 첫 프레임이 재개되는지 확인한다. Android Auto가 자동으로 다시 열리면 해당 앱의 자동 시작 설정을 끄고 다시 시도한다.
+당시 진단 복구 순서: Google Android Auto 세션을 닫고 AARE를 포그라운드에 둔 뒤 USB 앱 선택 화면에서 AARE를 선택했다. 연결을 해제한 상태에서 뷰어가 켜진 뒤 케이블을 약 3초 분리했다가 같은 포트에 다시 연결했다. 그 후 USB 추적에서 AAP 1.7, TLS 1.2 상호 인증, 서비스 탐색, 첫 프레임이 재개되는지 확인했다.
+
+최종 흐름에서는 Google AA 강제 종료, 사용 중지, 설정 변경을 요구하지 않는다. 후속 `feature/aare-auto-connect`는 AARE 필터가 model만 본다는 정적 근거를 바탕으로, 기본 model을 유지한 채 AOA version `2.0`으로 새 accessory identity를 만들어 Android의 앱 선택을 AARE + `Always`로 한 번 설정하는 후보를 준비했다. 이는 아직 실폰 미검증이다. [자동 연결 작업 상태](../android-auto/aare/AARE_AUTO_CONNECT_STATUS.md)
 
 ## 재현 기록
 

@@ -10,6 +10,6 @@ AARE 프로젝트의 다음 작업은 순정 지도 자원과 순정 영상 출�
 6. AARE 1.6.0 설치는 완료됐다. 다음은 사용자가 스마트폰에서 앱을 열고 P12 가져오기와 수신기 지문 승인을 수행한 뒤 첫 영상·터치·분리·재연결을 확인하는 것이다. ADB 점유는 이미 해제했다. [설치 기록](android-auto/aare/AARE_APK_INSTALL_ATTEMPT.md)
 7. 티맵 분할 화면은 가설만 정리됐다. AARE 1.6.0 기준 `0x8009`는 HU→phone request, `0x800A`는 phone→HU reply임을 확인했고 GD13MY에는 양쪽 경로가 없다. 원인 확정을 위해 discovery의 margin/density/UiConfig, `0x8009`/`0x800A` 트래픽, GD13MY 실제 safe area를 같은 세션에서 캡처한다. 임의 좌표·DPI·인셋 변경으로 해결을 보고하지 않는다. [방향 재확인](android-auto/aare/TMAP_DISPLAY_UPSTREAM_CROSSCHECK.md)
 
-현재 P0는 2026-11-28 23:52부터 실행 중인 복구 이미지 뷰어에서 AOA 2까지 진행했으나 첫 AAP 버전 요청의 USB I/O 오류로 멈췄다. 폰에는 Google Android Auto의 `통신 오류 16`이 표시됐고 AARE가 세션을 열지 못했다. 사용자가 Google AA를 종료하고 AARE를 포그라운드로 둔 뒤 케이블을 재연결해야 AAP/TLS/첫 프레임을 확인할 수 있다. 그 전에는 P1·P2 실폰 캡처를 BLOCKED로 유지한다. [최신 추적](testing/AARE_PHYSICAL_USB_RECOVERY.md#2026-11-28-재실행-aare-세션과-화면의-오류-16)
+현재 P0는 2026-11-28 23:52부터 실행 중인 복구 이미지 뷰어에서 AOA 2까지 진행했으나 첫 AAP 버전 요청의 USB I/O 오류로 멈췄다. 폰에는 Google Android Auto의 `통신 오류 16`이 표시됐고 AARE가 세션을 열지 못했다. 정적 분석상 AARE는 AOA model만 보고, Google AA가 같은 accessory를 선점한 것으로 판단된다. `feature/aare-auto-connect`에서 기본 신원을 유지한 채 AOA version만 `2.0`으로 바꾼 이미지를 만든 뒤, 앱 선택 화면에서 AARE + `Always`를 한 번 설정하고 AAP/TLS/첫 프레임을 확인한다. Google AA 강제 종료·비활성화는 최종 흐름에 넣지 않는다. 그 전에는 P1·P2 실폰 캡처를 BLOCKED로 유지한다. [자동 연결 작업 상태](android-auto/aare/AARE_AUTO_CONNECT_STATUS.md), [최신 추적](testing/AARE_PHYSICAL_USB_RECOVERY.md#2026-11-28-재실행-aare-세션과-화면의-오류-16)
 
 완료 판단은 재현 가능한 시험과 결과를 기준으로 한다. 미검증 항목은 통과 처리하지 않는다.

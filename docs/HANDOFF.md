@@ -4,7 +4,7 @@
 
 1. [PROJECT_STATUS](PROJECT_STATUS.md)와 [NEXT_TASKS](NEXT_TASKS.md)를 읽는다.
 2. 현재 git status 및 최신 커밋을 확인한다. v8 실폰 시험은 `f004f6f` 소스와 기존 v8 이미지를 사용했다. [실폰 재연결 시험](testing/AARE_PHYSICAL_USB_RECOVERY.md)
-3. P0 시험 이미지는 `build/p0-usb-repro/recovery-build/gd13my-aa-autostart-p0.img`다. 별도 DiskA 상태 파일을 사용한다. 재시동 후 기존 AOA 장치의 버전 요청이 타임아웃되면 지도 상태에서 폰 케이블을 물리적으로 다시 연결한다. 2026-11-28 재실행 로그는 `build/p0-usb-repro/live-fresh-agent/gd13my-window-20261128-235207-387221.*`이며 AOA 2 후 첫 AAP 버전 요청이 USB I/O 오류로 실패했다. 폰에는 Google Android Auto의 `통신 오류 16`이 표시되어 AARE가 아니라 Google AA가 세션을 열었다. Google AA를 종료하고 AARE를 포그라운드로 둔 뒤 재연결한다. [실행 명령과 인증 절차](android-auto/aare/FINAL_HANDOFF.md), [최신 추적](testing/AARE_PHYSICAL_USB_RECOVERY.md#2026-11-28-재실행-aare-세션과-화면의-오류-16)
+3. P0 시험 이미지는 `build/p0-usb-repro/recovery-build/gd13my-aa-autostart-p0.img`다. 별도 DiskA 상태 파일을 사용한다. 재시동 후 기존 AOA 장치의 버전 요청이 타임아웃되면 지도 상태에서 폰 케이블을 물리적으로 다시 연결한다. 2026-11-28 재실행 로그는 `build/p0-usb-repro/live-fresh-agent/gd13my-window-20261128-235207-387221.*`이며 AOA 2 후 첫 AAP 버전 요청이 USB I/O 오류로 실패했다. 폰에는 Google Android Auto의 `통신 오류 16`이 표시되어 AARE가 아니라 Google AA가 세션을 열었다. `feature/aare-auto-connect`에서 정적 분석을 마쳤고, 기본 AOA model을 유지한 채 version만 `2.0`으로 바꾼 후보를 만들었다. AARE는 version을 무시하지만 Android의 기본 앱 키에는 version이 들어가므로 Google AA 설정 변경 없이 새 앱 선택을 유도할 가능성이 있다(INFERRED). [자동 연결 작업 상태](android-auto/aare/AARE_AUTO_CONNECT_STATUS.md), [실행 명령과 인증 절차](android-auto/aare/FINAL_HANDOFF.md), [최신 추적](testing/AARE_PHYSICAL_USB_RECOVERY.md#2026-11-28-재실행-aare-세션과-화면의-오류-16)
 4. 성능·DSP·GPU 작업: [가속 인계](hardware/hardware-acceleration/FINAL_HANDOFF.md).
 5. 새 환경의 로컬 입력과 과거 재현 명령: [기존 세션 인계](archive/SESSION_HANDOFF.md). 상태 설명은 역사적 기록이다.
 6. 후속 기술 조사 및 시험 산출물 (2026-11-27):
@@ -15,6 +15,7 @@
    - 작업 E: [AARE 자동 실행 검증 보고서](testing/AARE_AUTOSTART_VALIDATION.md)
    - 작업 F: [AARE H.264 디코더 최적화 결과](android-auto/aare/H264_OPTIMIZATION_RESULTS.md): 내부 함수 프로파일, codegen 비교, opt-in fast-copy. 기본 배포 경로는 그대로 BGRA/ARMv4T이며 NEON과 Cortex-A8은 실험용이다.
 7. 신규 조사·인계 (2026-11-28):
+   - [AARE 자동 연결 및 USB 안정성](android-auto/aare/AARE_AUTO_CONNECT_STATUS.md): `feature/aare-auto-connect`의 증거·빌드 옵션·실폰 대기 작업. 기본 AOA 신원은 그대로이고 `2.0` version 후보는 opt-in.
    - [AARE 1.6.0 설치 기록](android-auto/aare/AARE_APK_INSTALL_ATTEMPT.md): 최초 `unauthorized`, 사용자 승인 후 `adb install -r` 성공, 패키지/버전/실행 액티비티 확인, ADB 점유 해제 완료.
    - [티맵 분할 화면 Upstream 재대조](android-auto/aare/TMAP_DISPLAY_UPSTREAM_CROSSCHECK.md): GD13MY는 margin/insets/ui_config 미전송, `0x8009`를 거부하고 세션 종료. 원인은 미검증. 6절에서 AARE 1.6.0의 `0x8009` HU→phone / `0x800A` phone→HU 방향과 GD13MY의 양방향 경로 부재, 회귀시험 결과(관련 39개·전체 98개 통과)를 확인했다. 에뮬레이터 미실행으로 라이브 캡처는 BLOCKED.
    - [UYVY DirectDraw 구현 명세](android-auto/aare/UYVY_DIRECTDRAW_IMPLEMENTATION_SPEC.md): CE6 API 계약, 호출 순서, 실패 처리, 활성화 전 검증 게이트. 기본 경로는 변경하지 않음.

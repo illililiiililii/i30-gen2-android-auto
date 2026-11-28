@@ -187,7 +187,8 @@ def build_bearssl(compiler, source, work, options, run_tool):
 
 
 def build(compiler, output, bearssl_source=None, h264_source=None, virtual_lcd_bench=False,
-          video_format='bgra', codegen='armv4t-os', h264_profile=False, h264_fast_copy=False):
+          video_format='bgra', codegen='armv4t-os', h264_profile=False, h264_fast_copy=False,
+          aoa_model='Android Auto', aoa_version='1.0'):
     source = ROOT / 'src/ce'
     exports = rom_exports()
     target_flags, decoder_flags = CODEGEN_FLAGS[codegen]
@@ -231,7 +232,8 @@ def build(compiler, output, bearssl_source=None, h264_source=None, virtual_lcd_b
             elf = work / (target + '.elf')
             units = [asm]
             if target == DRIVER:
-                units.extend((source / unit, source / 'aa_wire.c'))
+                units.extend((f'-DI30_AOA_MODEL="{aoa_model}"', f'-DI30_AOA_VERSION="{aoa_version}"',
+                              source / unit, source / 'aa_wire.c'))
             else:
                 units.append(source / 'ce_aa_usb_session.c')
                 if target == NAVIGATION_MODULE:
@@ -271,6 +273,9 @@ def build(compiler, output, bearssl_source=None, h264_source=None, virtual_lcd_b
             exe.write_bytes(image)
             report[target] = inspect(exe, exports)
             report[target]['codegen'] = codegen
+            if target == DRIVER:
+                report[target]['aoa_model'] = aoa_model
+                report[target]['aoa_version'] = aoa_version
             if video:
                 report[target]['video_format'] = video_format
                 report[target]['h264_fast_copy'] = h264_fast_copy
@@ -331,6 +336,11 @@ def main():
                         help='Instrument h264bsd with -finstrument-functions for ARM fixture profiling')
     parser.add_argument('--h264-fast-copy', action='store_true',
                         help='Opt-in inline aligned memcpy specialization for h264bsd reference rows')
+    parser.add_argument('--aoa-model', choices=('Android Auto', 'Android Open Automotive Protocol'),
+                        default='Android Auto',
+                        help='AOA model string; AARE v1.6.0 accepts both values; default preserves the stable identity')
+    parser.add_argument('--aoa-version', choices=('1.0', '2.0'), default='1.0',
+                        help='AOA version string; AARE v1.6.0 ignores it; 2.0 changes the Android default-app key')
     parser.add_argument('output', type=Path)
     args = parser.parse_args()
     if args.h264_source and (not args.bearssl_source or not (args.h264_source / 'src/h264bsd_decoder.h').is_file() or
@@ -341,7 +351,8 @@ def main():
     report = build(args.compiler.resolve(strict=True), args.output,
                    args.bearssl_source.resolve(strict=True) if args.bearssl_source else None,
                    args.h264_source.resolve(strict=True) if args.h264_source else None, args.virtual_lcd_bench,
-                   args.video_format, args.codegen, args.h264_profile, args.h264_fast_copy)
+                   args.video_format, args.codegen, args.h264_profile, args.h264_fast_copy,
+                   aoa_model=args.aoa_model, aoa_version=args.aoa_version)
     print(json.dumps(report, indent=2))
 
 

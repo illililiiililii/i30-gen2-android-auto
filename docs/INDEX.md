@@ -11,6 +11,7 @@
 - [순정 지도 리소스·영상 출력 조사](testing/AARE_STOCK_RESOURCE_BASELINE.md)
 - [AARE H.264 디코더 최적화 결과](android-auto/aare/H264_OPTIMIZATION_RESULTS.md)
 - [AARE 1.6.0 APK 설치 시도 기록](android-auto/aare/AARE_APK_INSTALL_ATTEMPT.md)
+- [AARE 자동 연결 및 USB 안정성 작업 상태](android-auto/aare/AARE_AUTO_CONNECT_STATUS.md) — `feature/aare-auto-connect` 진행 기준
 - [티맵 분할 화면 Upstream 재대조](android-auto/aare/TMAP_DISPLAY_UPSTREAM_CROSSCHECK.md) — AARE 1.6.0 `0x8009`/`0x800A` 방향 계약과 회귀 확인 포함
 - [UYVY DirectDraw 구현 명세](android-auto/aare/UYVY_DIRECTDRAW_IMPLEMENTATION_SPEC.md)
 - [AARE YUV420 → RGB565 직접 변환 결과](android-auto/aare/RGB565_OPTIMIZATION_RESULTS.md)

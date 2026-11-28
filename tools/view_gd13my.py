@@ -245,7 +245,7 @@ class WindowedRun(KernelRun):
                 self.use_usb_clock()
                 self.phone_port.reconnect()
             elif marker == USB_TEST_FAILURE:
-                self.messages.put(('usb', 'CE Android Auto 버전 응답 실패'))
+                self.messages.put(('usb', 'CE Android Auto 버전 응답 실패 · 폰에서 AARE가 액세서리를 열었는지 확인'))
             elif marker in USB_AUTH_STATUS:
                 self.usb_auth_status = USB_AUTH_STATUS[marker]
                 self.messages.put(('usb', self.usb_auth_status))
